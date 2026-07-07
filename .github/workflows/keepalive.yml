@@ -1,0 +1,15 @@
+# Supabase 무료 티어 7일 미접속 일시정지 방지 — 주 2회 ping
+name: supabase-keepalive
+on:
+  schedule:
+    - cron: "0 0 * * 1,4"  # 매주 월·목 00:00 UTC
+  workflow_dispatch:
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Supabase
+        run: |
+          curl -s -o /dev/null -w "%{http_code}\n" \
+            "${{ secrets.SUPABASE_URL }}/rest/v1/notes?select=id&limit=1" \
+            -H "apikey: ${{ secrets.SUPABASE_ANON_KEY }}"
