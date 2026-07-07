@@ -1,6 +1,4 @@
-/* CM기획팀 업무 관리 시스템 v2 — SPA (Supabase + GitHub Pages)
-   사번 로그인 / 공지(팀장 전용) / WBS 접기+간트 / 이슈 Cancel=완료 /
-   주간·일일 접기 / 파일 업로드(성과물·자료실) / 근태 월별 집계 */
+/* CM기획팀 업무 관리 시스템 v3 — SPA (Supabase + GitHub Pages) */
 "use strict";
 
 const sb = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);
@@ -20,7 +18,7 @@ function toast(msg, err = false) {
   d.className = "toast-item" + (err ? " err" : "");
   d.textContent = msg;
   $("#toast").appendChild(d);
-  setTimeout(() => d.remove(), 4200);
+  setTimeout(() => d.remove(), 4500);
 }
 function needLogin() { toast("로그인이 필요합니다. 좌측 하단에서 사번으로 로그인하세요.", true); }
 const canWrite = () => !!session;
@@ -31,7 +29,33 @@ function me() {
 }
 const isMaster = () => me()?.role === "master";
 
-/* 이슈 완료 판정 — 요청 Cancel 은 상태 공란이어도 완료. 공란(비Cancel)만 미해결 */
+/* 범용 모달 */
+function modal(title, bodyHtml, onSubmit, submitLabel = "저장") {
+  const wrap = document.createElement("div");
+  wrap.className = "modal-back";
+  wrap.innerHTML = `<div class="modal">
+    <div class="row" style="justify-content:space-between;margin-bottom:8px"><h2>${title}</h2>
+      <button type="button" class="btn sm ghost" data-x>✕ 닫기</button></div>
+    <form id="modal-form">${bodyHtml}
+      ${onSubmit ? `<div class="row" style="margin-top:14px;margin-bottom:0"><button class="btn" type="submit">${submitLabel}</button></div>` : ""}
+    </form></div>`;
+  document.body.appendChild(wrap);
+  wrap.addEventListener("click", (e) => {
+    if (e.target === wrap || e.target.hasAttribute("data-x")) wrap.remove();
+  });
+  if (onSubmit) $("#modal-form", wrap).addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const ok = await onSubmit(new FormData(e.target), wrap);
+    if (ok !== false) wrap.remove();
+  });
+  return wrap;
+}
+const fld = (label, inner, hint) => `<div class="field"><label>${label}</label>${inner}${hint ? `<div class="field-hint">${hint}</div>` : ""}</div>`;
+const selHtml = (name, options, selected, allLabel) =>
+  `<select name="${name}" style="width:100%">` + (allLabel ? `<option value="">${allLabel}</option>` : "") +
+  options.map(o => `<option value="${esc(o)}" ${o === selected ? "selected" : ""}>${esc(o)}</option>`).join("") + `</select>`;
+
+/* 이슈 완료 판정 — 요청 Cancel 은 상태 공란이어도 완료 */
 function issueClosed(x) {
   return x.request_go === "Cancel" || x.status === "완료" || x.status === "공지";
 }
@@ -111,7 +135,7 @@ async function route() {
   }
 }
 
-/* ══ 대시보드 — 공지 → 이슈 → 진행 중 과업 → 근태 ══ */
+/* ══ 대시보드 ══ */
 async function vDashboard() {
   const [notices, tasks, issues, att] = await Promise.all([
     q(sb.from("notices").select("*").order("created_at", { ascending: false }).limit(5)),
@@ -186,9 +210,15 @@ window.noticeDel = async function (id) {
   try { await q(sb.from("notices").delete().eq("id", id)); toast("삭제됨"); route(); } catch (_) {}
 };
 
-/* ══ WBS 진행 현황 — 계층 접기 + 간트 ══ */
+/* ══ WBS 진행 현황 ══ */
+let _tasks = [], _wbsMenus = [];
 async function vTasks() {
-  const tasks = await q(sb.from("wbs_tasks").select("*").order("id"));
+  const [tasks, codes] = await Promise.all([
+    q(sb.from("wbs_tasks").select("*").order("id")),
+    q(sb.from("wbs_codes").select("code").order("code")),
+  ]);
+  _tasks = tasks;
+  _wbsMenus = [...new Set([...codes.map(c => c.code), ...tasks.map(t => t.lv3_menu).filter(Boolean)])].sort();
   const state = { assignee: "", status: "" };
 
   function filtered() {
@@ -202,20 +232,21 @@ async function vTasks() {
 
   function render() {
     const rows = filtered();
-    // 간트 스케일
     const dates = rows.flatMap(x => [x.start_date, x.end_plan, x.end_real]).filter(Boolean).sort();
     const min = dates[0] ? new Date(dates[0]) : new Date();
     const max = dates.length ? new Date(dates[dates.length - 1]) : new Date();
-    max.setDate(max.getDate() + 7);
+    max.setDate(max.getDate() + 10);
     const span = Math.max(1, max - min);
     const t = new Date(today());
     const todayPos = t >= min && t <= max ? ((t - min) / span * 100) : null;
-    // 월 눈금
+    // 월 눈금 + 격월 밴드
     const ticks = [];
     const cur = new Date(min.getFullYear(), min.getMonth(), 1);
     while (cur <= max) {
-      const pos = Math.max(0, (cur - min) / span * 100);
-      if (pos < 98) ticks.push({ pos, label: (cur.getMonth() + 1) + "월" });
+      const pos = (cur - min) / span * 100;
+      const nxt = new Date(cur.getFullYear(), cur.getMonth() + 1, 1);
+      const w = (Math.min(nxt, max) - Math.max(cur, min)) / span * 100;
+      ticks.push({ pos: Math.max(0, pos), w: Math.max(0, w), label: (cur.getMonth() + 1) + "월", band: cur.getMonth() % 2 === 0 });
       cur.setMonth(cur.getMonth() + 1);
     }
     const scaleHeader = `<div class="gantt-scale">
@@ -224,41 +255,50 @@ async function vTasks() {
 
     const gantt = (x) => {
       if (!x.start_date) return "";
-      const s = new Date(x.start_date), e = new Date(x.end_real || x.end_plan || x.start_date);
+      const s = new Date(x.start_date), e0 = new Date(x.end_real || x.end_plan || x.start_date);
+      const e = new Date(e0); e.setDate(e.getDate() + 1); // 종료일 포함
       const l = Math.max(0, (s - min) / span * 100);
-      const w = Math.max(1.2, (e - s) / span * 100);
+      const w = Math.max(1.6, (e - s) / span * 100);
       const done = (x.progress ?? 0) >= 1;
       const late = !done && x.end_plan && x.end_plan < today();
+      const p = Math.min(100, Math.round((x.progress ?? 0) * 100));
+      const days = Math.round((e0 - s) / 86400000) + 1;
       return `<div class="gantt-bar-wrap">
+        ${ticks.map(k => k.band ? `<i class="gantt-band" style="left:${k.pos}%;width:${k.w}%"></i>` : "").join("")}
         ${ticks.map(k => `<i class="gantt-grid" style="left:${k.pos}%"></i>`).join("")}
         ${todayPos != null ? `<div class="gantt-today" style="left:${todayPos}%"></div>` : ""}
         <div class="gantt-bar ${done ? "done" : late ? "late" : ""}" style="left:${l}%;width:${w}%"
-          title="${fmtD(x.start_date)} ~ ${fmtD(x.end_real || x.end_plan)} ${pct(x.progress)}"></div></div>`;
+          title="${fmtD(x.start_date)} ~ ${fmtD(x.end_real || x.end_plan)} (${days}일) · 진행률 ${p}%">
+          <i class="gantt-prog" style="width:${p}%"></i></div>
+        <span class="gantt-label" style="left:${Math.min(l + w + 0.5, 88)}%">${fmtD(x.start_date).slice(5)}~${fmtD(x.end_real || x.end_plan).slice(5)}</span>
+      </div>`;
     };
 
-    // Lv3 그룹핑
     const groups = [];
     let g = null;
     for (const x of rows) {
       if (!g || x.lv3_menu !== g.lv3) { g = { lv3: x.lv3_menu, items: [] }; groups.push(g); }
       g.items.push(x);
     }
-    $("#task-body").innerHTML = groups.map((grp, gi) => `
+    $("#task-body").innerHTML = groups.map(grp => `
       <details class="wbs-group" open>
         <summary><b>${esc(grp.lv3 || "(미분류)")}</b>
           <span class="muted">${grp.items.length}건 · 평균 ${pct(grp.items.reduce((s, x) => s + (x.progress ?? 0), 0) / grp.items.length)}</span>
         </summary>
         <div class="tbl-wrap" style="max-height:none;border-radius:0 0 10px 10px;border-top:none">
-        <table><thead><tr><th style="min-width:230px">상세 업무</th><th>담당</th><th>시급성</th><th>Start</th><th>End(plan)</th><th>End(real)</th><th style="min-width:150px">진행률</th>
-        <th style="min-width:260px">${gi === 0 ? "타임라인" : ""}<div style="position:relative">${scaleHeader}</div></th></tr></thead><tbody>
+        <table><thead><tr><th style="min-width:220px">상세 업무</th><th>담당</th><th>시급성</th><th>Start</th><th>End(plan)</th><th>End(real)</th><th style="min-width:130px">진행률</th>
+        <th style="min-width:340px"><div style="position:relative">${scaleHeader}</div></th>${canWrite() ? "<th></th>" : ""}</tr></thead><tbody>
         ${grp.items.map(x => `<tr>
           <td class="wrap">${x.lv5_work && x.lv6_content ? `<small class="muted">${esc(x.lv5_work)}</small><br>` : ""}${esc(x.lv6_content || x.lv5_work || "")}${x.remark ? `<br><small class="muted">${esc(x.remark)}</small>` : ""}</td>
           <td>${esc(x.assignee || "")}</td>
           <td><span class="badge ${x.urgency === "S" ? "b-late" : x.urgency === "A" ? "b-warn" : "b-gray"}">${esc(x.urgency || "-")}</span></td>
           <td>${fmtD(x.start_date)}</td><td>${fmtD(x.end_plan)}</td>
           <td>${x.end_real ? fmtD(x.end_real) + (x.end_plan && x.end_real > x.end_plan ? ' <span class="badge b-late">지연</span>' : x.end_plan && x.end_real < x.end_plan ? ' <span class="badge b-done">조기</span>' : "") : '<span class="muted">-</span>'}</td>
-          <td>${progBar(x.progress)} ${canWrite() ? `<button class="btn sm ghost" onclick="taskEdit(${x.id})">수정</button>` : ""}</td>
-          <td>${gantt(x)}</td></tr>`).join("")}
+          <td>${progBar(x.progress)}</td>
+          <td>${gantt(x)}</td>
+          ${canWrite() ? `<td style="white-space:nowrap"><button class="btn sm ghost" onclick="taskEdit(${x.id})">수정</button>
+            <button class="btn sm ghost" style="color:var(--danger)" onclick="taskDel(${x.id})">삭제</button></td>` : ""}
+        </tr>`).join("")}
         </tbody></table></div>
       </details>`).join("");
     $("#task-count").textContent = rows.length + "건";
@@ -266,7 +306,7 @@ async function vTasks() {
 
   app.innerHTML = `
   <h1>WBS 진행 현황</h1>
-  <p class="page-sub">WBS(Lv3) 그룹별 접기·펼치기 + 간트 타임라인. Start·End(plan)는 수정 불가, 완료 시 End(real) 필수 (시스템 강제)</p>
+  <p class="page-sub">WBS(Lv3) 그룹별 접기 + 간트 타임라인. Start·End(plan)는 최초 입력 후 수정 불가, 완료 시 End(real) 필수 (시스템 강제)</p>
   <div class="row">
     ${sel("assignee", CONFIG.TEAM, "", "담당자 전체")}
     <select id="f-status"><option value="">상태 전체</option><option value="open">진행중</option>
@@ -281,38 +321,66 @@ async function vTasks() {
   $("#f-status").onchange = (e) => { state.status = e.target.value; render(); };
   $("#btn-fold").onclick = () => document.querySelectorAll(".wbs-group").forEach(d => d.open = false);
   $("#btn-unfold").onclick = () => document.querySelectorAll(".wbs-group").forEach(d => d.open = true);
-  window._tasks = tasks;
   render();
 }
 
-window.taskEdit = async function (id) {
+window.taskNew = function () {
   if (!canWrite()) return needLogin();
-  const x = (window._tasks || []).find(t => t.id === id);
-  if (!x) return;
-  const p = prompt(`진행률(%) 입력 — 현재 ${pct(x.progress) || "0%"}\n(100 입력 시 End(real) 필수)`, Math.round((x.progress ?? 0) * 100));
-  if (p == null) return;
-  const progress = Math.min(100, Math.max(0, parseFloat(p) || 0)) / 100;
-  let end_real = x.end_real;
-  if (progress >= 1 && !end_real) {
-    end_real = prompt("End(real) — 실제 완료일 (YYYY-MM-DD, 필수)", today());
-    if (!end_real || !/^\d{4}-\d{2}-\d{2}$/.test(end_real)) return toast("End(real) 미입력 — 완료 처리가 취소되었습니다.", true);
-  }
-  try {
-    await q(sb.from("wbs_tasks").update({ progress, end_real }).eq("id", id));
-    toast("저장 완료"); route();
-  } catch (_) {}
+  modal("과업 등록", [
+    fld("WBS 메뉴 (Lv3) <span class='req'>*</span>", selHtml("lv3", _wbsMenus, "")),
+    fld("수행 업무 (Lv5)", `<input type="text" name="lv5" style="width:100%" placeholder="예: 파싱 로직">`),
+    fld("상세 업무 내용 (Lv6) <span class='req'>*</span>", `<input type="text" name="lv6" style="width:100%" required>`),
+    `<div class="row">` +
+      fld("담당자", selHtml("assignee", CONFIG.TEAM, me().name)) +
+      fld("시급성", selHtml("urgency", ["S", "A", "B"], "B")) + `</div>`,
+    `<div class="row">` +
+      fld("Start", `<input type="date" name="start" value="${today()}" required>`) +
+      fld("End(plan)", `<input type="date" name="end" value="${today()}" required>`) + `</div>`,
+    `<div class="field-hint">⚠ Start·End(plan)는 저장 후 수정할 수 없습니다.</div>`,
+    fld("비고", `<input type="text" name="remark" style="width:100%">`),
+  ].join(""), async (f) => {
+    try {
+      await q(sb.from("wbs_tasks").insert({
+        lv3_menu: f.get("lv3"), lv5_work: f.get("lv5") || null, lv6_content: f.get("lv6"),
+        assignee: f.get("assignee"), urgency: f.get("urgency"),
+        start_date: f.get("start"), end_plan: f.get("end"), remark: f.get("remark") || null, progress: 0,
+      }));
+      toast("과업 등록 완료"); route();
+    } catch (_) { return false; }
+  }, "등록");
 };
-window.taskNew = async function () {
+
+window.taskEdit = function (id) {
   if (!canWrite()) return needLogin();
-  const lv6 = prompt("상세 업무 내용"); if (!lv6) return;
-  const assignee = prompt("담당자 (" + CONFIG.TEAM.join("/") + ")", me().name); if (!assignee) return;
-  const start = prompt("Start (YYYY-MM-DD) — 이후 수정 불가", today());
-  const end = prompt("End(plan) (YYYY-MM-DD) — 이후 수정 불가", today());
-  const lv3 = prompt("WBS Lv3 메뉴 (예: 1.1.3 작업보고(기존))", "");
-  try {
-    await q(sb.from("wbs_tasks").insert({ lv3_menu: lv3, lv6_content: lv6, assignee, urgency: "B", start_date: start, end_plan: end, progress: 0 }));
-    toast("과업 등록 완료"); route();
-  } catch (_) {}
+  const x = _tasks.find(t => t.id === id);
+  if (!x) return;
+  modal("과업 수정", [
+    fld("상세 업무 내용", `<input type="text" name="lv6" style="width:100%" value="${esc(x.lv6_content || "")}">`),
+    `<div class="row">` +
+      fld("시급성", selHtml("urgency", ["S", "A", "B"], x.urgency || "B")) +
+      fld("진행률(%)", `<input type="number" name="prog" min="0" max="100" value="${Math.round((x.progress ?? 0) * 100)}" style="width:90px">`) +
+      fld("End(real)", `<input type="date" name="end_real" value="${x.end_real || ""}">`) + `</div>`,
+    `<div class="field-hint">진행률 100% 저장 시 End(real) 필수. Start(${fmtD(x.start_date)})·End(plan)(${fmtD(x.end_plan)})은 수정 불가.</div>`,
+    fld("비고", `<input type="text" name="remark" style="width:100%" value="${esc(x.remark || "")}">`),
+  ].join(""), async (f) => {
+    const progress = Math.min(100, Math.max(0, parseFloat(f.get("prog")) || 0)) / 100;
+    const end_real = f.get("end_real") || null;
+    if (progress >= 1 && !end_real) { toast("진행률 100%는 End(real) 입력이 필수입니다.", true); return false; }
+    try {
+      await q(sb.from("wbs_tasks").update({
+        lv6_content: f.get("lv6") || null, urgency: f.get("urgency"),
+        progress, end_real, remark: f.get("remark") || null,
+      }).eq("id", id));
+      toast("저장 완료"); route();
+    } catch (_) { return false; }
+  });
+};
+
+window.taskDel = async function (id) {
+  if (!canWrite()) return needLogin();
+  const x = _tasks.find(t => t.id === id);
+  if (!confirm(`과업을 삭제할까요?\n"${(x?.lv6_content || "").slice(0, 50)}"`)) return;
+  try { await q(sb.from("wbs_tasks").delete().eq("id", id)); toast("삭제됨"); route(); } catch (_) {}
 };
 
 /* ══ WBS별 이슈 ══ */
@@ -339,7 +407,7 @@ async function vIssues() {
 
   app.innerHTML = `
   <h1>WBS별 이슈</h1>
-  <p class="page-sub">안건 → 질의 → 본인생각 → GO → 피드백. 요청 Cancel은 완료로 처리, 상태 공란(비Cancel)만 미해결.</p>
+  <p class="page-sub">안건 → 질의 → 본인생각 → GO → 피드백. 요청 Cancel은 완료로 처리.</p>
   <div class="row">
     ${sel("assignee", CONFIG.TEAM, "", "담당자 전체")}
     <select id="f-status"><option value="">전체</option><option value="open">미해결</option><option value="closed">완료</option></select>
@@ -356,11 +424,13 @@ async function vIssues() {
   render();
 }
 
+let _issueCache = null;
 async function vIssueDetail(id) {
   const [x, imgs] = await Promise.all([
     q(sb.from("wbs_issues").select("*").eq("id", id).single()),
     q(sb.from("issue_images").select("*")),
   ]);
+  _issueCache = x;
   const myImgs = imgs.filter(i => x.seq != null && +i.issue_seq === +x.seq);
   const locked = x.request_go && x.request_go.startsWith("GO");
   const comments = await q(sb.from("comments").select("*").eq("target_table", "wbs_issues").eq("target_id", id).order("created_at"));
@@ -371,26 +441,28 @@ async function vIssueDetail(id) {
   app.innerHTML = `
   <h1>이슈 상세 <small class="muted">#${x.seq ?? x.id}</small></h1>
   <p class="page-sub">${fmtD(x.issue_date)} · ${esc(x.assignee || "")} · ${goBadge(x.request_go)} ${issueStatusBadge(x)}</p>
-  ${locked ? '<div class="lock-notice">🔒 GO 제출됨 — 안건/질의/본인생각은 수정할 수 없습니다. 추가 의견은 아래 댓글로 남기세요.</div>' : ""}
+  ${locked ? '<div class="lock-notice">🔒 GO 제출됨 — 안건/질의/본인생각은 수정할 수 없습니다. 추가 의견은 댓글로.</div>' : ""}
   <div class="issue-grid">
     ${block("안건 (왜 논의가 필요한가)", x.agenda, true)}
     ${block("질의 사항 / 요청사항", x.question)}
     ${block("본인의 생각", x.opinion)}
     ${block("참고 자료", x.ref_material)}
-    ${block("피드백", x.feedback)}
+    <div class="issue-block"><h3>피드백 ${canWrite() ? `<button class="btn sm ghost" onclick="issueFeedback(${x.id})">✎ 입력/수정</button>` : ""}</h3>
+      <div class="body">${esc(x.feedback) || '<span class="muted">-</span>'}</div></div>
     ${myImgs.length ? `<div class="issue-block full"><h3>첨부 이미지</h3>${myImgs.map(i => `<img class="issue-img" src="${esc(i.image_path)}" loading="lazy">`).join("")}</div>` : ""}
   </div>
   <div class="row" style="margin-top:14px">
     ${canWrite() && !locked && x.request_go !== "Cancel" ? `<button class="btn" onclick="issueGo(${x.id}, null)">GO 제출 (검토 요청)</button>` : ""}
     ${canWrite() && locked && x.status !== "완료" ? `
       <button class="btn ghost" onclick="issueGo(${x.id}, '${esc(x.request_go)}')">재질의 (GO*n)</button>
-      <button class="btn" onclick="issueFeedback(${x.id})">피드백 입력</button>
       <button class="btn ghost" onclick="issueClose(${x.id})">완료 처리</button>` : ""}
+    ${canWrite() ? `<button class="btn ghost" style="color:var(--danger)" onclick="issueDel(${x.id})">이슈 삭제</button>` : ""}
     <a class="btn ghost" href="#/issues" style="text-decoration:none">← 목록</a>
   </div>
   <div class="panel" style="margin-top:18px"><h2>댓글 ${comments.length ? `(${comments.length})` : ""}</h2>
     <div id="cmt-list">${comments.map(c => `<div class="comment">
-      <div class="meta"><b>${esc(c.author)}</b>${c.mention ? ` → @${esc(c.mention)}` : ""} · ${String(c.created_at).slice(0, 16).replace("T", " ")}</div>
+      <div class="meta"><b>${esc(c.author)}</b>${c.mention ? ` → @${esc(c.mention)}` : ""} · ${String(c.created_at).slice(0, 16).replace("T", " ")}
+        ${canWrite() && (c.author === me().name || isMaster()) ? `<button class="btn sm ghost" onclick="cmtDel(${c.id}, ${id})">삭제</button>` : ""}</div>
       <div class="body">${esc(c.content)}</div></div>`).join("") || '<p class="muted">댓글 없음</p>'}
     </div>
     ${canWrite() ? `
@@ -413,6 +485,19 @@ async function vIssueDetail(id) {
   });
 }
 
+window.cmtDel = async function (cid, issueId) {
+  if (!confirm("댓글을 삭제할까요?")) return;
+  try { await q(sb.from("comments").delete().eq("id", cid)); toast("댓글 삭제됨"); vIssueDetail(issueId); } catch (_) {}
+};
+window.issueDel = async function (id) {
+  if (!canWrite()) return needLogin();
+  if (!confirm("이 이슈를 삭제할까요? 댓글도 함께 삭제됩니다.")) return;
+  try {
+    await q(sb.from("comments").delete().eq("target_table", "wbs_issues").eq("target_id", id));
+    await q(sb.from("wbs_issues").delete().eq("id", id));
+    toast("이슈 삭제됨"); location.hash = "#/issues";
+  } catch (_) {}
+};
 window.issueGo = async function (id, cur) {
   if (!canWrite()) return needLogin();
   let next = "GO";
@@ -426,11 +511,16 @@ window.issueGo = async function (id, cur) {
     toast(next + " 제출 완료"); vIssueDetail(id);
   } catch (_) {}
 };
-window.issueFeedback = async function (id) {
+window.issueFeedback = function (id) {
   if (!canWrite()) return needLogin();
-  const fb = prompt("피드백 내용");
-  if (!fb) return;
-  try { await q(sb.from("wbs_issues").update({ feedback: fb }).eq("id", id)); toast("피드백 등록"); vIssueDetail(id); } catch (_) {}
+  const cur = _issueCache && _issueCache.id === id ? (_issueCache.feedback || "") : "";
+  modal("피드백 입력/수정", fld("피드백 내용", `<textarea name="fb" style="min-height:140px" required>${esc(cur)}</textarea>`),
+    async (f) => {
+      try {
+        await q(sb.from("wbs_issues").update({ feedback: f.get("fb") }).eq("id", id));
+        toast("피드백 저장 — Slack 알림 발송"); vIssueDetail(id);
+      } catch (_) { return false; }
+    });
 };
 window.issueClose = async function (id) {
   if (!canWrite()) return needLogin();
@@ -476,18 +566,22 @@ async function vIssueNew() {
   });
 }
 
-/* ══ 주간 업무 요약 — 월별·주차별 접기 ══ */
+/* ══ 주간 업무 요약 — 본인 셀 직접 작성/수정 + 주차 추가 ══ */
+let _weeklyRows = [], _weeklyWeeks = {};
 async function vWeekly() {
   const rows = await q(sb.from("weekly_summaries").select("*").order("week_start", { ascending: false }));
+  _weeklyRows = rows;
   const weekMap = {}; const weeks = [];
   for (const r of rows) {
     if (!weekMap[r.week_label]) { weekMap[r.week_label] = { label: r.week_label, start: r.week_start, end: r.week_end, cells: {} }; weeks.push(weekMap[r.week_label]); }
-    weekMap[r.week_label].cells[r.member + "|" + r.category] = r.content;
+    if (r.week_start && !weekMap[r.week_label].start) weekMap[r.week_label].start = r.week_start;
+    if (r.week_end && !weekMap[r.week_label].end) weekMap[r.week_label].end = r.week_end;
+    weekMap[r.week_label].cells[r.member + "|" + r.category] = r;
   }
+  _weeklyWeeks = weekMap;
   const members = CONFIG.TEAM.filter(m => rows.some(r => r.member === m));
   const CATS = ["DONE", "ISSUE", "PLAN"];
   const catColor = { DONE: "b-done", ISSUE: "b-warn", PLAN: "b-prog" };
-  // 월별 그룹 (라벨 "7월 1주차" → "7월")
   const months = [];
   const mMap = {};
   for (const w of weeks) {
@@ -495,13 +589,16 @@ async function vWeekly() {
     if (!mMap[mon]) { mMap[mon] = { mon, weeks: [] }; months.push(mMap[mon]); }
     mMap[mon].weeks.push(w);
   }
+  const myName = me()?.name;
+  const editable = (m) => canWrite() && (m === myName || isMaster());
+
   app.innerHTML = `
   <h1>주간 업무 요약</h1>
-  <p class="page-sub">매주 금 17:00 주간 업무 정리 (DONE / ISSUE / PLAN) — 월·주차 접기 가능</p>
+  <p class="page-sub">매주 금 17:00 주간 업무 정리 — 본인 칸을 클릭해 직접 작성/수정 (DONE / ISSUE / PLAN)</p>
   <div class="row">
     <button class="btn sm ghost" onclick="document.querySelectorAll('#app details').forEach(d=>d.open=false)">모두 접기</button>
     <button class="btn sm ghost" onclick="document.querySelectorAll('#app details').forEach(d=>d.open=true)">모두 펼치기</button>
-    ${canWrite() ? '<button class="btn" onclick="weeklyAdd()">+ 항목 입력</button>' : ""}
+    ${canWrite() ? '<button class="btn" onclick="weekAdd()">+ 주차 추가</button>' : ""}
     <span class="muted">${weeks.length}주차 / ${months.length}개월</span></div>
   ${months.map((mg, mi) => `<details class="month-group" ${mi === 0 ? "open" : ""}>
     <summary><b>${esc(mg.mon)}</b> <span class="muted">${mg.weeks.length}주차</span></summary>
@@ -509,28 +606,63 @@ async function vWeekly() {
       <summary>${esc(w.label)} <small class="muted">${fmtD(w.start)} ~ ${fmtD(w.end)}</small></summary>
       <div class="week-grid" style="grid-template-columns:70px repeat(${members.length}, 1fr)">
         <div class="week-cell week-head">구분</div>
-        ${members.map(m => `<div class="week-cell week-head">${esc(m)}</div>`).join("")}
+        ${members.map(m => `<div class="week-cell week-head">${esc(m)}${m === myName ? ' <span class="badge b-go">나</span>' : ""}</div>`).join("")}
         ${CATS.map(c => `<div class="week-cell week-cat"><span class="badge ${catColor[c]}">${c}</span></div>` +
-          members.map(m => `<div class="week-cell">${esc(w.cells[m + "|" + c] || "")}</div>`).join("")).join("")}
+          members.map(m => {
+            const cell = w.cells[m + "|" + c];
+            const canEd = editable(m);
+            return `<div class="week-cell ${canEd ? "editable" : ""}"
+              ${canEd ? `onclick="weekCellEdit('${esc(w.label)}','${esc(m)}','${c}')" title="클릭하여 작성/수정"` : ""}>${esc(cell?.content || "")}${canEd ? '<span class="cell-pen">✎</span>' : ""}</div>`;
+          }).join("")).join("")}
       </div></details>`).join("")}
-  </details>`).join("")}`;
+  </details>`).join("") || '<div class="panel muted">주차가 없습니다. [+ 주차 추가]로 시작하세요.</div>'}`;
 }
-window.weeklyAdd = async function () {
+
+window.weekCellEdit = function (label, member, cat) {
   if (!canWrite()) return needLogin();
-  const member = prompt("팀원 (" + CONFIG.TEAM.join("/") + ")", me().name); if (!member) return;
-  const category = (prompt("구분 (DONE / ISSUE / PLAN)", "DONE") || "").toUpperCase();
-  if (!["DONE", "ISSUE", "PLAN"].includes(category)) return toast("구분은 DONE/ISSUE/PLAN 중 하나", true);
-  const week_label = prompt("주차 라벨 (예: 7월 2주차)"); if (!week_label) return;
-  const content = prompt("내용"); if (!content) return;
-  try {
-    await q(sb.from("weekly_summaries").insert({ week_label, member, category, content, week_start: today() }));
-    toast("입력 완료"); route();
-  } catch (_) {}
+  if (member !== me().name && !isMaster()) return toast("본인 칸만 작성할 수 있습니다.", true);
+  const w = _weeklyWeeks[label];
+  const cell = w?.cells[member + "|" + cat];
+  modal(`${label} · ${member} · ${cat}`,
+    fld("내용", `<textarea name="c" style="min-height:160px" placeholder="- 항목별로 줄바꿈하여 작성">${esc(cell?.content || "")}</textarea>`),
+    async (f) => {
+      const content = f.get("c").trim();
+      try {
+        if (cell) await q(sb.from("weekly_summaries").update({ content }).eq("id", cell.id));
+        else await q(sb.from("weekly_summaries").insert({
+          week_label: label, week_start: w?.start || null, week_end: w?.end || null,
+          member, category: cat, content }));
+        toast("저장 완료"); route();
+      } catch (_) { return false; }
+    });
 };
 
-/* ══ 일일 기록 — 주차·일자 접기 + 팀원별 묶음(최다 시간 상단, 나머지 펼치기) ══ */
+window.weekAdd = function () {
+  if (!canWrite()) return needLogin();
+  // 다음 주차 라벨 자동 제안
+  const d = new Date();
+  const sug = (d.getMonth() + 1) + "월 " + Math.ceil(d.getDate() / 7) + "주차";
+  const mon = new Date(d); mon.setDate(d.getDate() - ((d.getDay() + 6) % 7)); // 이번주 월요일
+  const fri = new Date(mon); fri.setDate(mon.getDate() + 4);
+  modal("주차 추가", [
+    fld("주차 라벨 <span class='req'>*</span>", `<input type="text" name="label" value="${sug}" required placeholder="예: 7월 2주차">`),
+    `<div class="row">` +
+      fld("시작일(월)", `<input type="date" name="s" value="${mon.toISOString().slice(0, 10)}" required>`) +
+      fld("종료일(금)", `<input type="date" name="e" value="${fri.toISOString().slice(0, 10)}" required>`) + `</div>`,
+    `<div class="field-hint">추가하면 전 팀원 × DONE/ISSUE/PLAN 빈 칸이 생성되고, 각자 본인 칸을 클릭해 입력합니다.</div>`,
+  ].join(""), async (f) => {
+    const label = f.get("label").trim();
+    if (_weeklyWeeks[label]) { toast("이미 존재하는 주차입니다.", true); return false; }
+    const ins = [];
+    for (const m of CONFIG.TEAM) for (const c of ["DONE", "ISSUE", "PLAN"])
+      ins.push({ week_label: label, week_start: f.get("s"), week_end: f.get("e"), member: m, category: c, content: "" });
+    try { await q(sb.from("weekly_summaries").insert(ins)); toast(label + " 생성 완료 — 본인 칸을 클릭해 입력하세요."); route(); }
+    catch (_) { return false; }
+  }, "주차 생성");
+};
+
+/* ══ 일일 기록 ══ */
 async function vDaily() {
-  // 서버 페이지 한도(1,000행) 대응 — 전체 로드
   let rows = []; let page = 0;
   while (true) {
     const chunk = await q(sb.from("daily_logs").select("*").order("log_date", { ascending: false }).range(page * 1000, page * 1000 + 999));
@@ -538,13 +670,13 @@ async function vDaily() {
     if (chunk.length < 1000 || page >= 9) break;
     page++;
   }
-  // 주차 라벨 누락 시 일자 기준 자동 생성
   for (const r of rows) {
     if (!r.week_label && r.log_date) {
       const d = new Date(r.log_date);
       r.week_label = (d.getMonth() + 1) + "월 " + Math.ceil(d.getDate() / 7) + "주차 (" + r.log_date.slice(0, 7) + ")";
     }
   }
+  const ORD = (m) => { const i = CONFIG.TEAM.indexOf(m); return i < 0 ? 99 : i; };
   const state = { member: "", month: "" };
   const months = [...new Set(rows.map(r => (r.log_date || "").slice(0, 7)))].sort().reverse();
 
@@ -552,12 +684,10 @@ async function vDaily() {
     let f = rows;
     if (state.member) f = f.filter(r => r.member === state.member);
     if (state.month) f = f.filter(r => (r.log_date || "").startsWith(state.month));
-    // 집계 카드
     const byMember = {};
     for (const r of f) byMember[r.member] = (byMember[r.member] || 0) + (r.hours || 0);
-    $("#daily-cards").innerHTML = Object.entries(byMember).sort((a, b) => b[1] - a[1]).map(([m, h]) =>
+    $("#daily-cards").innerHTML = Object.entries(byMember).sort((a, b) => ORD(a[0]) - ORD(b[0])).map(([m, h]) =>
       `<div class="card"><div class="num">${Math.round(h * 10) / 10}<small style="font-size:13px">h</small></div><div class="lbl">${esc(m)}</div></div>`).join("");
-    // 주차 → 일자 → 팀원 그룹
     const weekOrder = []; const wMap = {};
     for (const r of f) {
       const wk = r.week_label || "기타";
@@ -573,7 +703,7 @@ async function vDaily() {
       <details class="month-group" ${wi === 0 ? "open" : ""}>
         <summary><b>${esc(W.wk)}</b> <span class="muted">${W.dateOrder.length}일</span></summary>
         ${W.dateOrder.map((dt, di) => {
-          const mems = Object.entries(W.dates[dt]);
+          const mems = Object.entries(W.dates[dt]).sort((a, b) => ORD(a[0]) - ORD(b[0]));
           return `<details class="week-detail" ${wi === 0 && di === 0 ? "open" : ""}>
           <summary>${dt} <span class="muted">${mems.length}명 ${mems.reduce((s, [, l]) => s + l.length, 0)}건</span></summary>
           <div class="daily-date-grid">
@@ -612,7 +742,7 @@ async function vDaily() {
   render();
 }
 
-/* ══ 성과물 · 참고자료 — 링크 추가 + 파일 업로드 ══ */
+/* ══ 성과물 · 참고자료 ══ */
 async function vDeliverables() {
   const [dels, refs] = await Promise.all([
     q(sb.from("deliverables").select("*").order("no")),
@@ -623,7 +753,8 @@ async function vDeliverables() {
   <div class="panel"><h2>성과물 (${dels.length})</h2>
     ${canWrite() ? `<div class="row">
       <button class="btn sm" onclick="delAddLink()">+ 링크 추가</button>
-      <label class="btn sm ghost" style="cursor:pointer">📎 파일 업로드<input type="file" id="del-file" class="hidden"></label>
+      <button class="btn sm ghost" onclick="document.getElementById('del-file').click()">📎 파일 업로드</button>
+      <input type="file" id="del-file" class="hidden" onchange="delUpload(this)">
     </div>` : ""}
     <div class="tbl-wrap" style="max-height:45vh"><table>
     <thead><tr><th>번호</th><th>설명</th><th>URL</th><th>담당</th><th>비고</th></tr></thead><tbody>
@@ -639,45 +770,52 @@ async function vDeliverables() {
       <td class="wrap">${r.url ? `<a class="link" href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.title || "링크")}</a>` : esc(r.title)}</td>
       <td>${esc(r.assignee)}</td></tr>`).join("")}
     </tbody></table></div></div>`;
-
-  const fi = $("#del-file");
-  if (fi) fi.addEventListener("change", async () => {
-    const file = fi.files[0]; if (!file) return;
-    const title = prompt("성과물 설명", file.name); if (title == null) return;
-    const path = `deliverables/${Date.now()}_${file.name.replace(/[^\w.\-가-힣]/g, "_")}`;
-    try {
-      const { error } = await sb.storage.from("files").upload(path, file);
-      if (error) throw error;
-      const url = sb.storage.from("files").getPublicUrl(path).data.publicUrl;
-      const maxNo = Math.max(0, ...(await q(sb.from("deliverables").select("no"))).map(d => d.no || 0));
-      await q(sb.from("deliverables").insert({ no: Math.floor(maxNo) + 1, title, url, assignee: me().name, remark: "업로드 파일" }));
-      toast("파일 업로드 완료"); route();
-    } catch (e) { toast("업로드 실패: " + (e.message || e), true); }
-  });
 }
-window.delAddLink = async function () {
+window.delUpload = async function (input) {
+  const file = input.files[0]; if (!file) return;
   if (!canWrite()) return needLogin();
-  const title = prompt("성과물 설명"); if (!title) return;
-  const url = prompt("URL (https://...)"); if (!url) return;
+  const title = prompt("성과물 설명", file.name); if (title == null) return;
+  const path = `deliverables/${Date.now()}_${file.name.replace(/[^\w.\-가-힣]/g, "_")}`;
+  toast("업로드 중… " + file.name);
   try {
+    const { error } = await sb.storage.from("files").upload(path, file);
+    if (error) throw error;
+    const url = sb.storage.from("files").getPublicUrl(path).data.publicUrl;
     const maxNo = Math.max(0, ...(await q(sb.from("deliverables").select("no"))).map(d => d.no || 0));
-    await q(sb.from("deliverables").insert({ no: Math.floor(maxNo) + 1, title, url, assignee: me().name }));
-    toast("링크 추가 완료"); route();
-  } catch (_) {}
+    await q(sb.from("deliverables").insert({ no: Math.floor(maxNo) + 1, title, url, assignee: me().name, remark: "업로드 파일" }));
+    toast("파일 업로드 완료"); route();
+  } catch (e) { toast("업로드 실패: " + (e.message || e), true); }
 };
-window.refAddLink = async function () {
+window.delAddLink = function () {
   if (!canWrite()) return needLogin();
-  const title = prompt("자료명"); if (!title) return;
-  const url = prompt("URL (https://...)") || null;
-  const dno = prompt("연관 성과물 번호 (선택)") || null;
-  try {
-    const maxNo = Math.max(0, ...(await q(sb.from("reference_materials").select("no"))).map(d => d.no || 0));
-    await q(sb.from("reference_materials").insert({ no: Math.floor(maxNo) + 1, title, url, deliverable_no: dno ? +dno : null, assignee: me().name }));
-    toast("자료 추가 완료"); route();
-  } catch (_) {}
+  modal("성과물 링크 추가", [
+    fld("설명 <span class='req'>*</span>", `<input type="text" name="t" style="width:100%" required>`),
+    fld("URL <span class='req'>*</span>", `<input type="text" name="u" style="width:100%" required placeholder="https://...">`),
+    fld("비고", `<input type="text" name="r" style="width:100%">`),
+  ].join(""), async (f) => {
+    try {
+      const maxNo = Math.max(0, ...(await q(sb.from("deliverables").select("no"))).map(d => d.no || 0));
+      await q(sb.from("deliverables").insert({ no: Math.floor(maxNo) + 1, title: f.get("t"), url: f.get("u"), assignee: me().name, remark: f.get("r") || null }));
+      toast("링크 추가 완료"); route();
+    } catch (_) { return false; }
+  }, "추가");
+};
+window.refAddLink = function () {
+  if (!canWrite()) return needLogin();
+  modal("참고자료 추가", [
+    fld("자료명 <span class='req'>*</span>", `<input type="text" name="t" style="width:100%" required>`),
+    fld("URL", `<input type="text" name="u" style="width:100%" placeholder="https://... (선택)">`),
+    fld("연관 성과물 번호", `<input type="number" name="d" style="width:120px">`),
+  ].join(""), async (f) => {
+    try {
+      const maxNo = Math.max(0, ...(await q(sb.from("reference_materials").select("no"))).map(d => d.no || 0));
+      await q(sb.from("reference_materials").insert({ no: Math.floor(maxNo) + 1, title: f.get("t"), url: f.get("u") || null, deliverable_no: f.get("d") ? +f.get("d") : null, assignee: me().name }));
+      toast("자료 추가 완료"); route();
+    } catch (_) { return false; }
+  }, "추가");
 };
 
-/* ══ 자료실 — HTML/MD 업로드 & 뷰어 (기존 hmcmsite 통합) ══ */
+/* ══ 자료실 ══ */
 async function vDocs() {
   const { data: files, error } = await sb.storage.from("files").list("docs", { limit: 200, sortBy: { column: "created_at", order: "desc" } });
   if (error) { app.innerHTML = `<div class="panel">자료실 로드 실패: ${esc(error.message)}</div>`; return; }
@@ -687,9 +825,11 @@ async function vDocs() {
 
   app.innerHTML = `
   <h1>자료실</h1>
-  <p class="page-sub">팀원이 생성한 HTML·MD 문서 업로드 및 뷰어 (기존 hmcmsite 기능 통합)</p>
+  <p class="page-sub">팀원이 생성한 HTML·MD 문서 업로드 및 뷰어</p>
   <div class="row">
-    ${canWrite() ? `<label class="btn" style="cursor:pointer">📄 문서 업로드 (.html / .md 등)<input type="file" id="doc-file" class="hidden" accept=".html,.htm,.md,.txt,.pdf,.png,.jpg"></label>` : '<span class="muted">업로드는 로그인 필요</span>'}
+    ${canWrite() ? `<button class="btn" onclick="document.getElementById('doc-file').click()">📄 문서 업로드</button>
+      <input type="file" id="doc-file" class="hidden" accept=".html,.htm,.md,.txt,.pdf,.png,.jpg,.jpeg,.gif" onchange="docUpload(this)">` : '<span class="muted">업로드는 로그인 필요</span>'}
+    <button class="btn ghost" onclick="mockupOpen()">🖥 기존 Mock-up 열기 (hmcmsite)</button>
     <span class="muted">${list.length}개 문서</span>
   </div>
   <div class="tbl-wrap"><table>
@@ -700,26 +840,35 @@ async function vDocs() {
       <td>${(f.created_at || "").slice(0, 10)}</td>
       <td><button class="btn sm" onclick="docView('${esc(f.name)}')">보기</button>
           <a class="btn sm ghost" style="text-decoration:none" href="${esc(pub(f.name))}" target="_blank" rel="noopener">새 창 ↗</a></td>
-      ${canWrite() ? `<td><button class="btn sm ghost" onclick="docDel('${esc(f.name)}')">삭제</button></td>` : ""}
+      ${canWrite() ? `<td><button class="btn sm ghost" style="color:var(--danger)" onclick="docDel('${esc(f.name)}')">삭제</button></td>` : ""}
     </tr>`).join("") || `<tr><td colspan="5" class="muted">문서가 없습니다. 첫 문서를 업로드하세요.</td></tr>`}
     </tbody></table></div>
   <div id="doc-viewer" class="panel hidden" style="margin-top:16px">
     <div class="row" style="justify-content:space-between"><h2 id="doc-viewer-title"></h2>
-      <button class="btn sm ghost" onclick="$('#doc-viewer').classList.add('hidden')">닫기 ✕</button></div>
+      <button class="btn sm ghost" onclick="document.getElementById('doc-viewer').classList.add('hidden')">닫기 ✕</button></div>
     <div id="doc-viewer-body" class="doc-body"></div>
   </div>`;
-
-  const fi = $("#doc-file");
-  if (fi) fi.addEventListener("change", async () => {
-    const file = fi.files[0]; if (!file) return;
-    const path = `docs/${Date.now()}_${file.name.replace(/[^\w.\-가-힣]/g, "_")}`;
-    try {
-      const { error } = await sb.storage.from("files").upload(path, file);
-      if (error) throw error;
-      toast("업로드 완료: " + file.name); route();
-    } catch (e) { toast("업로드 실패: " + (e.message || e), true); }
-  });
 }
+window.docUpload = async function (input) {
+  const file = input.files[0]; if (!file) return;
+  if (!canWrite()) return needLogin();
+  const path = `docs/${Date.now()}_${file.name.replace(/[^\w.\-가-힣]/g, "_")}`;
+  toast("업로드 중… " + file.name);
+  try {
+    const { error } = await sb.storage.from("files").upload(path, file, { contentType: file.type || "application/octet-stream" });
+    if (error) throw error;
+    toast("업로드 완료: " + file.name);
+    route();
+  } catch (e) { toast("업로드 실패: " + (e.message || e), true); }
+};
+window.mockupOpen = function () {
+  const wrap = modal("HMCM Mock-up (기존 사이트)",
+    `<iframe src="https://seanjo77.github.io/hmcmsite/" style="width:100%;height:76vh;border:1px solid var(--line);border-radius:8px;background:#fff"></iframe>
+     <div class="field-hint" style="margin-top:6px"><a class="link" href="https://seanjo77.github.io/hmcmsite/" target="_blank" rel="noopener">새 창에서 열기 ↗</a></div>`,
+    null);
+  $(".modal", wrap).style.maxWidth = "1100px";
+  $(".modal", wrap).style.width = "92vw";
+};
 window.docView = async function (name) {
   const url = sb.storage.from("files").getPublicUrl("docs/" + name).data.publicUrl;
   const viewer = $("#doc-viewer"), body = $("#doc-viewer-body");
@@ -744,7 +893,7 @@ window.docDel = async function (name) {
   else { toast("삭제됨"); route(); }
 };
 
-/* ══ 근태 — 월별 집계 대시보드 ══ */
+/* ══ 근태 ══ */
 async function vAttendance() {
   const rows = await q(sb.from("attendance").select("*").order("att_date", { ascending: false }));
   const months = [...new Set(rows.map(r => (r.att_date || "").slice(0, 7)))].filter(Boolean).sort().reverse();
@@ -753,13 +902,11 @@ async function vAttendance() {
 
   function render() {
     const f = state.month ? rows.filter(r => (r.att_date || "").startsWith(state.month)) : rows;
-    // 집계: 팀원 × 구분
     const types = [...new Set(f.map(r => r.att_type || "기타"))];
     const agg = {};
     for (const r of f) {
-      const k = r.name;
-      agg[k] = agg[k] || {};
-      agg[k][r.att_type || "기타"] = (agg[k][r.att_type || "기타"] || 0) + 1;
+      agg[r.name] = agg[r.name] || {};
+      agg[r.name][r.att_type || "기타"] = (agg[r.name][r.att_type || "기타"] || 0) + 1;
     }
     $("#att-agg").innerHTML = `
       <table><thead><tr><th>팀원</th>${types.map(tp => `<th>${esc(tp)}</th>`).join("")}<th>합계</th></tr></thead><tbody>
@@ -779,7 +926,7 @@ async function vAttendance() {
     ${sel("a-month", months, state.month, "전체 기간")}
     ${canWrite() ? '<button class="btn" onclick="attAdd()">+ 근태 등록</button>' : ""}
   </div>
-  <div class="panel"><h2>월별 집계 <span class="muted" id="att-mon-label"></span></h2><div id="att-agg"></div></div>
+  <div class="panel"><h2>월별 집계</h2><div id="att-agg"></div></div>
   <div class="panel"><h2>상세 기록</h2>
   <div class="tbl-wrap" style="max-height:50vh"><table>
     <thead><tr><th>날짜</th><th>이름</th><th>구분</th><th>비고</th></tr></thead>
@@ -787,16 +934,23 @@ async function vAttendance() {
   $("#f-a-month").onchange = (e) => { state.month = e.target.value; render(); };
   render();
 }
-window.attAdd = async function () {
+window.attAdd = function () {
   if (!canWrite()) return needLogin();
-  const att_date = prompt("날짜 (YYYY-MM-DD)", today()); if (!att_date) return;
-  const name = prompt("이름", me().name); if (!name) return;
-  const att_type = prompt("구분 (연차/시차/출장/연장근무 등)", "연차"); if (!att_type) return;
-  const remark = prompt("비고 (선택)") || null;
-  try { await q(sb.from("attendance").insert({ att_date, name, att_type, remark })); toast("근태 등록 완료"); route(); } catch (_) {}
+  modal("근태 등록", [
+    `<div class="row">` +
+      fld("날짜", `<input type="date" name="d" value="${today()}" required>`) +
+      fld("이름", selHtml("n", CONFIG.TEAM, me().name)) +
+      fld("구분", selHtml("t", ["연차", "반차", "시차", "출장", "연장근무", "기타"], "연차")) + `</div>`,
+    fld("비고", `<input type="text" name="r" style="width:100%" placeholder="예: 8/18~21 (총 4일)">`),
+  ].join(""), async (f) => {
+    try {
+      await q(sb.from("attendance").insert({ att_date: f.get("d"), name: f.get("n"), att_type: f.get("t"), remark: f.get("r") || null }));
+      toast("근태 등록 완료"); route();
+    } catch (_) { return false; }
+  }, "등록");
 };
 
-/* ══ 운영 규칙 — 통합 단일 표 ══ */
+/* ══ 운영 규칙 ══ */
 async function vNotes() {
   const notes = await q(sb.from("notes").select("*").order("no"));
   const sysRules = [

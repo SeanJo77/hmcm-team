@@ -144,10 +144,36 @@ details.week-detail .week-grid { padding: 10px; }
 summary::-webkit-details-marker { display: none; }
 
 /* v2: 간트 스케일 */
-.gantt-scale { position: relative; height: 16px; min-width: 220px; font-weight: 400; }
+.gantt-scale { position: relative; height: 16px; min-width: 300px; font-weight: 400; }
 .gantt-tick { position: absolute; top: 0; font-size: 10px; color: var(--sub); border-left: 1px solid var(--line); padding-left: 3px; height: 16px; }
 .gantt-today-flag { position: absolute; top: 0; font-size: 10px; color: var(--danger); font-weight: 700; padding-left: 3px; border-left: 2px solid var(--danger); height: 16px; }
 .gantt-grid { position: absolute; top: 0; bottom: 0; width: 1px; background: #e8ecf1; }
+.gantt-band { position: absolute; top: 0; bottom: 0; background: #f4f7fa; }
+
+/* v3: 간트 바 개선 */
+.gantt-bar-wrap { background: #fff; border: 1px solid var(--line); border-radius: 5px; height: 22px; position: relative; min-width: 300px; overflow: hidden; }
+.gantt-bar { position: absolute; top: 2px; bottom: 2px; height: auto; border-radius: 4px;
+  background: #dbeafe; border: 1px solid #93c5fd; overflow: hidden; }
+.gantt-bar .gantt-prog { position: absolute; left: 0; top: 0; bottom: 0; background: #3b82f6; opacity: .8; }
+.gantt-bar.done { background: #dcfce7; border-color: #86efac; }
+.gantt-bar.done .gantt-prog { background: #22c55e; }
+.gantt-bar.late { background: #fee2e2; border-color: #fca5a5; }
+.gantt-bar.late .gantt-prog { background: #ef4444; }
+.gantt-label { position: absolute; top: 4px; font-size: 9.5px; color: var(--sub); white-space: nowrap; }
+
+/* v3: 모달 */
+.modal-back { position: fixed; inset: 0; background: rgba(15, 23, 42, .5); z-index: 90;
+  display: flex; align-items: center; justify-content: center; padding: 20px; }
+.modal { background: var(--panel); border-radius: 14px; padding: 20px 22px; width: 560px; max-width: 94vw;
+  max-height: 90vh; overflow: auto; box-shadow: 0 20px 60px rgba(0,0,0,.3); }
+.modal h2 { font-size: 16px; }
+.modal .row .field { flex: 1; min-width: 120px; }
+
+/* v3: 주간 셀 편집 */
+.week-cell.editable { cursor: pointer; position: relative; }
+.week-cell.editable:hover { background: var(--accent-soft); border-color: #bfdbfe; }
+.week-cell .cell-pen { position: absolute; right: 6px; top: 5px; font-size: 11px; color: #b6c3d4; }
+.week-cell.editable:hover .cell-pen { color: var(--accent); }
 
 /* v2: 일일 기록 */
 .daily-date-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 10px; padding: 10px; }
