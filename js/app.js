@@ -315,6 +315,7 @@ async function vTasks() {
     <button class="btn sm ghost" id="btn-unfold">모두 펼치기</button>
     <span class="muted" id="task-count"></span>
     ${canWrite() ? '<button class="btn" onclick="taskNew()">+ 과업 등록</button>' : ""}
+    ${isMaster() ? '<button class="btn ghost" onclick="wbsNew()">+ WBS 등록 (팀장)</button>' : ""}
   </div>
   <div id="task-body"></div>`;
   $("#f-assignee").onchange = (e) => { state.assignee = e.target.value; render(); };
@@ -323,6 +324,25 @@ async function vTasks() {
   $("#btn-unfold").onclick = () => document.querySelectorAll(".wbs-group").forEach(d => d.open = true);
   render();
 }
+
+window.wbsNew = function () {
+  if (!isMaster()) return toast("팀장만 WBS를 등록할 수 있습니다.", true);
+  modal("WBS 등록 (WBS_CODE)", [
+    fld("Level 1 — 상단 메뉴 탭", `<input type="text" name="lv1" style="width:100%" placeholder="예: 1. 일일보고">`),
+    fld("Level 2 — 소분류 그룹", `<input type="text" name="lv2" style="width:100%" placeholder="예: 1.1 입력 및 보고">`),
+    fld("Level 3 — 실행 메뉴 코드 <span class='req'>*</span>", `<input type="text" name="code" style="width:100%" required placeholder="예: 1.1.5 신규 메뉴명">`),
+    fld("설명", `<input type="text" name="desc" style="width:100%">`),
+    fld("우선순위", `<input type="number" name="pri" step="0.5" style="width:100px" value="0">`),
+  ].join(""), async (f) => {
+    try {
+      await q(sb.from("wbs_codes").insert({
+        lv1: f.get("lv1") || null, lv2: f.get("lv2") || null, code: f.get("code"),
+        description: f.get("desc") || null, priority: parseFloat(f.get("pri")) || 0,
+      }));
+      toast("WBS 등록 완료 — 과업 등록 드롭다운에 반영됩니다."); route();
+    } catch (_) { return false; }
+  }, "등록");
+};
 
 window.taskNew = function () {
   if (!canWrite()) return needLogin();
@@ -603,7 +623,11 @@ async function vWeekly() {
   ${months.map((mg, mi) => `<details class="month-group" ${mi === 0 ? "open" : ""}>
     <summary><b>${esc(mg.mon)}</b> <span class="muted">${mg.weeks.length}주차</span></summary>
     ${mg.weeks.map((w, wi) => `<details class="week-detail" ${mi === 0 && wi === 0 ? "open" : ""}>
-      <summary>${esc(w.label)} <small class="muted">${fmtD(w.start)} ~ ${fmtD(w.end)}</small></summary>
+      <summary>${esc(w.label)} <small class="muted">${fmtD(w.start)} ~ ${fmtD(w.end)}</small>
+        ${canWrite() ? `<span style="margin-left:auto;white-space:nowrap">
+          <button type="button" class="btn sm ghost" onclick="event.stopPropagation();event.preventDefault();weekDates('${esc(w.label)}')">날짜 변경</button>
+          <button type="button" class="btn sm ghost" style="color:var(--danger)" onclick="event.stopPropagation();event.preventDefault();weekDel('${esc(w.label)}')">주차 삭제</button></span>` : ""}
+      </summary>
       <div class="week-grid" style="grid-template-columns:70px repeat(${members.length}, 1fr)">
         <div class="week-cell week-head">구분</div>
         ${members.map(m => `<div class="week-cell week-head">${esc(m)}${m === myName ? ' <span class="badge b-go">나</span>' : ""}</div>`).join("")}
@@ -635,6 +659,29 @@ window.weekCellEdit = function (label, member, cat) {
         toast("저장 완료"); route();
       } catch (_) { return false; }
     });
+};
+
+window.weekDates = function (label) {
+  if (!canWrite()) return needLogin();
+  const w = _weeklyWeeks[label];
+  if (!w) return;
+  modal("주차 날짜 변경 — " + label, `<div class="row">` +
+    fld("시작일", `<input type="date" name="s" value="${w.start || ""}" required>`) +
+    fld("종료일", `<input type="date" name="e" value="${w.end || ""}" required>`) + `</div>`,
+    async (f) => {
+      try {
+        await q(sb.from("weekly_summaries").update({ week_start: f.get("s"), week_end: f.get("e") }).eq("week_label", label));
+        toast("날짜 변경 완료"); route();
+      } catch (_) { return false; }
+    });
+};
+window.weekDel = async function (label) {
+  if (!canWrite()) return needLogin();
+  if (!confirm(`"${label}" 주차 전체를 삭제할까요? (전 팀원 DONE/ISSUE/PLAN 내용 포함)`)) return;
+  try {
+    await q(sb.from("weekly_summaries").delete().eq("week_label", label));
+    toast(label + " 삭제됨"); route();
+  } catch (_) {}
 };
 
 window.weekAdd = function () {
@@ -733,6 +780,7 @@ async function vDaily() {
     ${sel("d-month", months, "", "월 전체")}
     <button class="btn sm ghost" onclick="document.querySelectorAll('#daily-body details').forEach(d=>d.open=false)">모두 접기</button>
     <button class="btn sm ghost" onclick="document.querySelectorAll('#daily-body details').forEach(d=>d.open=true)">모두 펼치기</button>
+    ${canWrite() ? '<button class="btn" onclick="dailyAdd()">+ 기록 입력</button>' : ""}
     <span class="muted" id="daily-count"></span>
   </div>
   <div class="cards" id="daily-cards"></div>
@@ -741,6 +789,32 @@ async function vDaily() {
   $("#f-d-month").onchange = (e) => { state.month = e.target.value; render(); };
   render();
 }
+
+window.dailyAdd = function () {
+  if (!canWrite()) return needLogin();
+  modal("일일 기록 입력", [
+    `<div class="row">` +
+      fld("일자", `<input type="date" name="d" value="${today()}" required>`) +
+      fld("팀원", selHtml("m", CONFIG.TEAM, me().name)) +
+      fld("시간(h)", `<input type="number" name="h" step="0.5" min="0" max="24" value="1" style="width:90px" required>`) + `</div>`,
+    `<div class="row">` +
+      fld("프로젝트", `<input type="text" name="p" placeholder="예: [BD-26-활용-02] bCMf">`) +
+      fld("서브코드", `<input type="text" name="s" placeholder="예: e.S/W 설계">`) + `</div>`,
+    fld("업무 내용 <span class='req'>*</span>", `<textarea name="c" required placeholder="[시간] 업무 내용"></textarea>`),
+  ].join(""), async (f) => {
+    const dt = f.get("d");
+    const dd = new Date(dt);
+    const wk = (dd.getMonth() + 1) + "월 " + Math.ceil(dd.getDate() / 7) + "주차 (" + dt.slice(0, 7) + ")";
+    try {
+      await q(sb.from("daily_logs").insert({
+        log_date: dt, week_label: wk, member: f.get("m"),
+        project: f.get("p") || null, subcode: f.get("s") || null,
+        content: f.get("c"), hours: parseFloat(f.get("h")) || null,
+      }));
+      toast("기록 입력 완료"); route();
+    } catch (_) { return false; }
+  }, "입력");
+};
 
 /* ══ 성과물 · 참고자료 ══ */
 async function vDeliverables() {
@@ -775,7 +849,7 @@ window.delUpload = async function (input) {
   const file = input.files[0]; if (!file) return;
   if (!canWrite()) return needLogin();
   const title = prompt("성과물 설명", file.name); if (title == null) return;
-  const path = `deliverables/${Date.now()}_${file.name.replace(/[^\w.\-가-힣]/g, "_")}`;
+  const path = `deliverables/${Date.now()}_${docKeyEncode(file.name)}`;
   toast("업로드 중… " + file.name);
   try {
     const { error } = await sb.storage.from("files").upload(path, file);
@@ -824,7 +898,7 @@ async function vDocs() {
   const kb = (n) => n > 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB";
 
   app.innerHTML = `
-  <h1>자료실</h1>
+  <h1>HMCM Mock-up</h1>
   <p class="page-sub">팀원이 생성한 HTML·MD 문서 업로드 및 뷰어</p>
   <div class="row">
     ${canWrite() ? `<button class="btn" onclick="document.getElementById('doc-file').click()">📄 문서 업로드</button>
@@ -835,7 +909,7 @@ async function vDocs() {
   <div class="tbl-wrap"><table>
     <thead><tr><th>문서명</th><th>크기</th><th>업로드일</th><th>보기</th>${canWrite() ? "<th></th>" : ""}</tr></thead><tbody>
     ${list.map(f => `<tr>
-      <td class="wrap">${esc(f.name.replace(/^\d{13}_/, ""))}</td>
+      <td class="wrap">${esc(docDisplayName(f.name))}</td>
       <td>${f.metadata ? kb(f.metadata.size || 0) : ""}</td>
       <td>${(f.created_at || "").slice(0, 10)}</td>
       <td><button class="btn sm" onclick="docView('${esc(f.name)}')">보기</button>
@@ -849,10 +923,26 @@ async function vDocs() {
     <div id="doc-viewer-body" class="doc-body"></div>
   </div>`;
 }
+/* 스토리지 키는 ASCII만 허용 → 한글 파일명은 base64url 인코딩 저장, 화면에서 복원 */
+function docKeyEncode(filename) {
+  const dot = filename.lastIndexOf(".");
+  const base = dot > 0 ? filename.slice(0, dot) : filename;
+  const ext = dot > 0 ? filename.slice(dot).replace(/[^\w.]/g, "") : "";
+  const b64 = btoa(unescape(encodeURIComponent(base))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  return b64 + ext;
+}
+function docDisplayName(key) {
+  const m = key.match(/^\d{13}_([A-Za-z0-9\-_]+)(\.\w+)?$/);
+  if (!m) return key.replace(/^\d{13}_/, "");
+  try {
+    const b64 = m[1].replace(/-/g, "+").replace(/_/g, "/");
+    return decodeURIComponent(escape(atob(b64))) + (m[2] || "");
+  } catch (_) { return key.replace(/^\d{13}_/, ""); }
+}
 window.docUpload = async function (input) {
   const file = input.files[0]; if (!file) return;
   if (!canWrite()) return needLogin();
-  const path = `docs/${Date.now()}_${file.name.replace(/[^\w.\-가-힣]/g, "_")}`;
+  const path = `docs/${Date.now()}_${docKeyEncode(file.name)}`;
   toast("업로드 중… " + file.name);
   try {
     const { error } = await sb.storage.from("files").upload(path, file, { contentType: file.type || "application/octet-stream" });
@@ -872,7 +962,7 @@ window.mockupOpen = function () {
 window.docView = async function (name) {
   const url = sb.storage.from("files").getPublicUrl("docs/" + name).data.publicUrl;
   const viewer = $("#doc-viewer"), body = $("#doc-viewer-body");
-  $("#doc-viewer-title").textContent = name.replace(/^\d{13}_/, "");
+  $("#doc-viewer-title").textContent = docDisplayName(name);
   viewer.classList.remove("hidden");
   if (/\.md$|\.txt$/i.test(name)) {
     const txt = await (await fetch(url)).text();
@@ -951,8 +1041,10 @@ window.attAdd = function () {
 };
 
 /* ══ 운영 규칙 ══ */
+let _notes = [];
 async function vNotes() {
   const notes = await q(sb.from("notes").select("*").order("no"));
+  _notes = notes;
   const sysRules = [
     ["이슈", "안건(1문장) → 질의(번호 목록) → 본인생각(1:1 대응) 순으로 작성. GO 제출 시 자동 잠금, 추가 의견은 댓글로."],
     ["일정", "Start·End(plan)는 최초 입력 후 수정 불가. 진행률 100% 처리 시 End(real) 필수 — 지연/조기는 시스템 자동 판정."],
@@ -964,12 +1056,36 @@ async function vNotes() {
   ];
   app.innerHTML = `
   <h1>운영 규칙</h1><p class="page-sub">CM기획팀 운영 규칙 — 시스템 강제 항목은 사이트에서 자동 적용됩니다.</p>
+  ${isMaster() ? `<div class="row"><button class="btn" onclick="noteAdd()">+ 규칙 추가 (팀장 전용)</button></div>` : ""}
   <div class="panel">
-    <table><thead><tr><th style="width:90px">구분</th><th>규칙</th></tr></thead><tbody>
-    ${sysRules.map(([cat, txt]) => `<tr><td><span class="badge b-go">${cat}</span></td><td class="wrap">${esc(txt)}</td></tr>`).join("")}
-    ${notes.map(n => `<tr><td><span class="badge b-gray">전달 ${n.no ?? ""}</span></td><td class="wrap">${esc(n.content)}</td></tr>`).join("")}
+    <table><thead><tr><th style="width:90px">구분</th><th>규칙</th>${isMaster() ? '<th style="width:110px"></th>' : ""}</tr></thead><tbody>
+    ${sysRules.map(([cat, txt]) => `<tr><td><span class="badge b-go">${cat}</span></td><td class="wrap">${esc(txt)}</td>${isMaster() ? "<td></td>" : ""}</tr>`).join("")}
+    ${notes.map(n => `<tr><td><span class="badge b-gray">전달 ${n.no ?? ""}</span></td><td class="wrap">${esc(n.content)}</td>
+      ${isMaster() ? `<td style="white-space:nowrap"><button class="btn sm ghost" onclick="noteEdit(${n.id})">수정</button>
+        <button class="btn sm ghost" style="color:var(--danger)" onclick="noteDel(${n.id})">삭제</button></td>` : ""}</tr>`).join("")}
     </tbody></table></div>`;
 }
+window.noteAdd = function () {
+  if (!isMaster()) return toast("팀장만 규칙을 추가할 수 있습니다.", true);
+  const maxNo = Math.max(0, ..._notes.map(n => n.no || 0));
+  modal("규칙 추가", fld("내용", `<textarea name="c" required></textarea>`), async (f) => {
+    try { await q(sb.from("notes").insert({ no: Math.floor(maxNo) + 1, content: f.get("c") })); toast("추가 완료"); route(); }
+    catch (_) { return false; }
+  }, "추가");
+};
+window.noteEdit = function (id) {
+  if (!isMaster()) return toast("팀장만 수정할 수 있습니다.", true);
+  const n = _notes.find(x => x.id === id); if (!n) return;
+  modal("규칙 수정 — 전달 " + (n.no ?? ""), fld("내용", `<textarea name="c" required>${esc(n.content)}</textarea>`), async (f) => {
+    try { await q(sb.from("notes").update({ content: f.get("c") }).eq("id", id)); toast("수정 완료"); route(); }
+    catch (_) { return false; }
+  });
+};
+window.noteDel = async function (id) {
+  if (!isMaster()) return toast("팀장만 삭제할 수 있습니다.", true);
+  if (!confirm("이 규칙을 삭제할까요?")) return;
+  try { await q(sb.from("notes").delete().eq("id", id)); toast("삭제됨"); route(); } catch (_) {}
+};
 
 /* ── boot ─────────────────────────────────────── */
 window.addEventListener("hashchange", route);
