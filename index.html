@@ -17,14 +17,15 @@
     <a href="#/weekly" data-route="/weekly">주간 업무 요약</a>
     <a href="#/daily" data-route="/daily">일일 기록 (ERP)</a>
     <a href="#/deliverables" data-route="/deliverables">성과물·참고자료</a>
+    <a href="#/docs" data-route="/docs">자료실</a>
     <a href="#/attendance" data-route="/attendance">근태</a>
     <a href="#/notes" data-route="/notes">운영 규칙</a>
   </nav>
   <div id="auth-box">
     <div id="auth-user" class="hidden"><span id="auth-email"></span><button id="btn-logout" class="btn sm ghost">로그아웃</button></div>
     <form id="auth-form">
-      <input type="email" id="login-email" placeholder="이메일" required>
-      <input type="password" id="login-pw" placeholder="비밀번호" required>
+      <input type="text" id="login-empno" placeholder="사번 (예: b22042)" autocomplete="username" required>
+      <input type="password" id="login-pw" placeholder="비밀번호" autocomplete="current-password" required>
       <button class="btn sm" type="submit">로그인</button>
       <p class="hint">읽기는 로그인 없이 가능. 등록·수정은 로그인 필요.</p>
     </form>
@@ -33,6 +34,7 @@
 <main id="app"><div class="loading">불러오는 중…</div></main>
 <div id="toast"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
 <script src="js/config.js"></script>
 <script src="js/app.js"></script>
 </body>

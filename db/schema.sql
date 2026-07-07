@@ -197,7 +197,14 @@ end; $$ language plpgsql;
 create trigger trg_task_rules before insert or update on wbs_tasks
   for each row execute function enforce_task_rules();
 
+-- ※ 기존 seed 데이터에는 미완료 End(real) 27건이 있으므로,
+--   트리거는 schema → seed 순서로 실행해도 신규 입력분부터만 적용되도록
+--   seed.sql을 먼저 실행하거나, 본 스키마 실행 후 seed 실행 시
+--   'set session_replication_role = replica;' 로 트리거를 일시 비활성화할 것 (README 참조).
+
 -- ── RLS (Row Level Security) ─────────────────────
+-- 기본: 읽기는 누구나(anon), 쓰기는 로그인 사용자만.
+-- 로그인 기능을 쓰지 않기로 결정하면 아래 'authenticated'를 'anon'으로 변경.
 do $$
 declare t text;
 begin
@@ -212,3 +219,27 @@ begin
     execute format('create policy "delete_auth" on %I for delete to authenticated using (true)', t);
   end loop;
 end $$;
+
+-- ── v2 개편: 공지(notices) — 작성은 팀장(master)만 ──
+create table if not exists notices (
+  id bigint generated always as identity primary key,
+  author text not null default '조선두',
+  content text not null,
+  created_at timestamptz default now()
+);
+alter table notices enable row level security;
+create policy "notice_read" on notices for select using (true);
+create policy "notice_insert_master" on notices for insert to authenticated
+  with check ((auth.jwt()->>'email') = 'b22042@hmcm.local');
+create policy "notice_update_master" on notices for update to authenticated
+  using ((auth.jwt()->>'email') = 'b22042@hmcm.local');
+create policy "notice_delete_master" on notices for delete to authenticated
+  using ((auth.jwt()->>'email') = 'b22042@hmcm.local');
+
+-- ── v2 개편: 파일 스토리지 (자료실·성과물 업로드) ──
+insert into storage.buckets (id, name, public) values ('files','files', true)
+  on conflict (id) do nothing;
+create policy "files_read" on storage.objects for select using (bucket_id = 'files');
+create policy "files_insert" on storage.objects for insert to authenticated with check (bucket_id = 'files');
+create policy "files_update" on storage.objects for update to authenticated using (bucket_id = 'files');
+create policy "files_delete" on storage.objects for delete to authenticated using (bucket_id = 'files');
