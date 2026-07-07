@@ -530,7 +530,21 @@ window.weeklyAdd = async function () {
 
 /* ══ 일일 기록 — 주차·일자 접기 + 팀원별 묶음(최다 시간 상단, 나머지 펼치기) ══ */
 async function vDaily() {
-  const rows = await q(sb.from("daily_logs").select("*").order("log_date", { ascending: false }).limit(4000));
+  // 서버 페이지 한도(1,000행) 대응 — 전체 로드
+  let rows = []; let page = 0;
+  while (true) {
+    const chunk = await q(sb.from("daily_logs").select("*").order("log_date", { ascending: false }).range(page * 1000, page * 1000 + 999));
+    rows = rows.concat(chunk);
+    if (chunk.length < 1000 || page >= 9) break;
+    page++;
+  }
+  // 주차 라벨 누락 시 일자 기준 자동 생성
+  for (const r of rows) {
+    if (!r.week_label && r.log_date) {
+      const d = new Date(r.log_date);
+      r.week_label = (d.getMonth() + 1) + "월 " + Math.ceil(d.getDate() / 7) + "주차 (" + r.log_date.slice(0, 7) + ")";
+    }
+  }
   const state = { member: "", month: "" };
   const months = [...new Set(rows.map(r => (r.log_date || "").slice(0, 7)))].sort().reverse();
 
@@ -734,7 +748,8 @@ window.docDel = async function (name) {
 async function vAttendance() {
   const rows = await q(sb.from("attendance").select("*").order("att_date", { ascending: false }));
   const months = [...new Set(rows.map(r => (r.att_date || "").slice(0, 7)))].filter(Boolean).sort().reverse();
-  const state = { month: months[0] || "" };
+  const curMon = today().slice(0, 7);
+  const state = { month: months.includes(curMon) ? curMon : (months[0] || "") };
 
   function render() {
     const f = state.month ? rows.filter(r => (r.att_date || "").startsWith(state.month)) : rows;
