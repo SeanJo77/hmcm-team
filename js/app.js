@@ -393,7 +393,7 @@ async function vTasks() {
         <table><thead><tr><th style="min-width:220px">상세 업무</th><th>담당</th><th>시급성</th><th>Start</th><th>End(plan)</th><th>End(real)</th><th style="min-width:130px">진행률</th>
         <th style="min-width:340px"><div style="position:relative">${scaleHeader}</div></th>${canWrite() ? "<th></th>" : ""}</tr></thead><tbody>
         ${grp.items.map(x => `<tr>
-          <td class="wrap">${x.lv5_work && x.lv6_content ? `<small class="muted">${esc(x.lv5_work)}</small><br>` : ""}${esc(x.lv6_content || x.lv5_work || "")}${x.remark ? `<br><small class="muted">${esc(x.remark)}</small>` : ""}</td>
+          <td class="wrap">${x.holding ? `<span class="badge b-hold">⏸ Holding</span> ` : ""}${x.lv5_work && x.lv6_content ? `<small class="muted">${esc(x.lv5_work)}</small><br>` : ""}${esc(x.lv6_content || x.lv5_work || "")}${x.remark ? `<div class="task-lc">📝 <b>팀장 코멘트</b> · ${esc(x.remark)}</div>` : ""}</td>
           <td>${esc(x.assignee || "")}</td>
           <td><span class="badge ${x.urgency === "S" ? "b-late" : x.urgency === "A" ? "b-warn" : "b-gray"}">${esc(x.urgency || "-")}</span></td>
           <td>${fmtD(x.start_date)}</td><td>${fmtD(x.end_plan)}</td>
@@ -582,24 +582,34 @@ window.taskEdit = function (id) {
   const x = _tasks.find(t => t.id === id);
   if (!x) return;
   if (!guardEdit(x.assignee)) return;
+  const master = isMaster();
   modal("과업 수정", [
     fld("상세 업무 내용", `<input type="text" name="lv6" style="width:100%" value="${esc(x.lv6_content || "")}">`),
     `<div class="row">` +
       fld("시급성", selHtml("urgency", ["S", "A", "B"], x.urgency || "B")) +
       fld("진행률(%)", `<input type="number" name="prog" min="0" max="100" value="${Math.round((x.progress ?? 0) * 100)}" style="width:90px">`) +
       fld("End(real)", `<input type="date" name="end_real" value="${x.end_real || ""}">`) + `</div>`,
+    fld("상태", `<label style="display:inline-flex;align-items:center;gap:7px;cursor:pointer"><input type="checkbox" name="holding" ${x.holding ? "checked" : ""} style="width:auto"> ⏸ Holding (보류)</label>`),
     `<div class="field-hint">진행률 100% 저장 시 End(real) 필수. Start(${fmtD(x.start_date)})·End(plan)(${fmtD(x.end_plan)})은 수정 불가.</div>`,
-    fld("비고", `<input type="text" name="remark" style="width:100%" value="${esc(x.remark || "")}">`),
+    master
+      ? fld("팀장 코멘트", `<textarea name="remark" style="width:100%;min-height:70px" placeholder="담당자에게 전달할 코멘트 (저장 시 알림 발송)">${esc(x.remark || "")}</textarea>`)
+      : fld("팀장 코멘트", `<div class="body" style="white-space:pre-wrap">${esc(x.remark) || '<span class="muted">-</span>'}</div><div class="field-hint">팀장만 작성/수정할 수 있습니다.</div>`),
   ].join(""), async (f) => {
     const progress = Math.min(100, Math.max(0, parseFloat(f.get("prog")) || 0)) / 100;
     const end_real = f.get("end_real") || null;
     if (progress >= 1 && !end_real) { toast("진행률 100%는 End(real) 입력이 필수입니다.", true); return false; }
+    const holding = !!f.get("holding");
+    const newRemark = master ? ((f.get("remark") || "").trim() || null) : (x.remark ?? null);
+    const remarkChanged = master && newRemark !== (x.remark || null);
     try {
       await q(sb.from("wbs_tasks").update({
         lv6_content: f.get("lv6") || null, urgency: f.get("urgency"),
-        progress, end_real, remark: f.get("remark") || null,
+        progress, end_real, holding, remark: newRemark,
       }).eq("id", id));
-      toast("저장 완료"); route();
+      if (remarkChanged && newRemark && x.assignee) {
+        await notify(x.assignee, `${me().name} 팀장이 '${(x.lv6_content || x.lv5_work || "과업").slice(0, 30)}' 과업에 팀장 코멘트를 남겼습니다.`, "#/tasks", "task_comment");
+      }
+      toast("저장 완료" + (remarkChanged && newRemark ? " · 알림 발송" : "")); route();
     } catch (_) { return false; }
   });
 };
