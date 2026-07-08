@@ -129,7 +129,7 @@ function renderAuth() {
 
 /* ── router ───────────────────────────────────── */
 const routes = {
-  "/": vDashboard, "/tasks": vTasks, "/issues": vIssues,
+  "/": vDashboard, "/tasks": vTasks, "/wbs": vWbsManage, "/issues": vIssues,
   "/weekly": vWeekly, "/daily": vDaily, "/deliverables": vDeliverables,
   "/docs": vDocs, "/attendance": vAttendance, "/notes": vNotes,
 };
@@ -330,7 +330,7 @@ async function vTasks() {
     <button class="btn sm ghost" id="btn-unfold">모두 펼치기</button>
     <span class="muted" id="task-count"></span>
     ${canWrite() ? '<button class="btn" onclick="taskNew()">+ 과업 등록</button>' : ""}
-    ${isMaster() ? '<button class="btn ghost" onclick="wbsNew()">+ WBS 등록 (팀장)</button>' : ""}
+    ${isMaster() ? '<button class="btn ghost" onclick="wbsNew()">+ WBS 등록 (팀장)</button><a class="btn ghost" href="#/wbs" style="text-decoration:none">WBS 전체 관리</a>' : ""}
   </div>
   <div id="task-body"></div>`;
   $("#f-assignee").onchange = (e) => { state.assignee = e.target.value; render(); };
@@ -357,6 +357,110 @@ window.wbsNew = function () {
       toast("WBS 등록 완료 — 과업 등록 드롭다운에 반영됩니다."); route();
     } catch (_) { return false; }
   }, "등록");
+};
+
+/* ══ 전체 WBS 관리 (팀장) ══ */
+let _wbsCodes = [];
+async function vWbsManage() {
+  const [codes, tasks] = await Promise.all([
+    q(sb.from("wbs_codes").select("*")),
+    q(sb.from("wbs_tasks").select("lv3_menu")),
+  ]);
+  const usage = {};
+  for (const t of tasks) if (t.lv3_menu) usage[t.lv3_menu] = (usage[t.lv3_menu] || 0) + 1;
+  const cmp = (a, b) => String(a || "").localeCompare(String(b || ""), "ko", { numeric: true });
+  codes.sort((a, b) => cmp(a.lv1, b.lv1) || cmp(a.lv2, b.lv2) || cmp(a.code, b.code));
+  _wbsCodes = codes;
+  const state = { kw: "" };
+
+  function render() {
+    let rows = _wbsCodes;
+    if (state.kw) {
+      const k = state.kw.toLowerCase();
+      rows = rows.filter(x => ((x.lv1 || "") + " " + (x.lv2 || "") + " " + (x.code || "") + " " + (x.description || "")).toLowerCase().includes(k));
+    }
+    const groups = []; const gmap = {};
+    for (const x of rows) {
+      const key = x.lv1 || "(미분류)";
+      if (!gmap[key]) { gmap[key] = { lv1: key, items: [] }; groups.push(gmap[key]); }
+      gmap[key].items.push(x);
+    }
+    $("#wbs-body").innerHTML = groups.map(g => `
+      <details class="wbs-group" open>
+        <summary><b>${esc(g.lv1)}</b> <span class="muted">${g.items.length}개 코드</span></summary>
+        <div class="tbl-wrap" style="max-height:none;border-radius:0 0 10px 10px;border-top:none">
+        <table><thead><tr><th style="min-width:130px">Lv2 소분류</th><th style="min-width:200px">Lv3 실행 메뉴 코드</th><th>설명</th><th style="width:80px">우선순위</th><th style="width:80px">사용</th>${isMaster() ? "<th></th>" : ""}</tr></thead><tbody>
+        ${g.items.map(x => `<tr>
+          <td class="wrap">${esc(x.lv2 || "")}</td>
+          <td class="wrap"><b>${esc(x.code || "")}</b></td>
+          <td class="wrap">${esc(x.description || "")}</td>
+          <td>${x.priority ?? ""}</td>
+          <td>${usage[x.code] ? `<span class="badge b-prog">${usage[x.code]}건</span>` : '<span class="muted">-</span>'}</td>
+          ${isMaster() ? `<td style="white-space:nowrap"><button class="btn sm ghost" onclick="wbsEdit(${x.id})">수정</button>
+            <button class="btn sm ghost" style="color:var(--danger)" onclick="wbsDel(${x.id})">삭제</button></td>` : ""}
+        </tr>`).join("")}
+        </tbody></table></div>
+      </details>`).join("") || '<div class="panel muted">검색 결과가 없습니다.</div>';
+    $("#wbs-count").textContent = rows.length + "개 코드 / 전체 " + _wbsCodes.length;
+  }
+
+  app.innerHTML = `
+  <h1>전체 WBS 관리 <small class="muted">(팀장)</small></h1>
+  <p class="page-sub">WBS 코드 체계(Lv1 상단 탭 · Lv2 소분류 · Lv3 실행 메뉴)를 등록·수정·삭제합니다. 여기 등록한 코드가 과업 등록 시 WBS 메뉴 드롭다운에 반영됩니다.</p>
+  <div class="row">
+    <input type="text" id="f-wbs-kw" placeholder="검색 (탭 / 소분류 / 코드 / 설명)">
+    <button class="btn sm ghost" id="btn-fold">모두 접기</button>
+    <button class="btn sm ghost" id="btn-unfold">모두 펼치기</button>
+    <span class="muted" id="wbs-count"></span>
+    ${isMaster() ? '<button class="btn" onclick="wbsNew()">+ WBS 등록</button>' : '<span class="muted">등록·수정·삭제는 팀장 로그인 필요</span>'}
+  </div>
+  <div id="wbs-body"></div>`;
+  $("#f-wbs-kw").oninput = (e) => { state.kw = e.target.value; render(); };
+  $("#btn-fold").onclick = () => document.querySelectorAll("#wbs-body .wbs-group").forEach(d => d.open = false);
+  $("#btn-unfold").onclick = () => document.querySelectorAll("#wbs-body .wbs-group").forEach(d => d.open = true);
+  render();
+}
+
+window.wbsEdit = function (id) {
+  if (!isMaster()) return toast("팀장만 WBS를 수정할 수 있습니다.", true);
+  const x = _wbsCodes.find(c => c.id === id);
+  if (!x) return;
+  modal("WBS 수정", [
+    fld("Level 1 — 상단 메뉴 탭", `<input type="text" name="lv1" style="width:100%" value="${esc(x.lv1 || "")}" placeholder="예: 1. 일일보고">`),
+    fld("Level 2 — 소분류 그룹", `<input type="text" name="lv2" style="width:100%" value="${esc(x.lv2 || "")}" placeholder="예: 1.1 입력 및 보고">`),
+    fld("Level 3 — 실행 메뉴 코드 <span class='req'>*</span>", `<input type="text" name="code" style="width:100%" required value="${esc(x.code || "")}">`),
+    fld("설명", `<input type="text" name="desc" style="width:100%" value="${esc(x.description || "")}">`),
+    fld("우선순위", `<input type="number" name="pri" step="0.5" style="width:100px" value="${x.priority ?? 0}">`),
+    `<div class="field-hint">⚠ 코드명을 변경하면, 이 코드를 참조하는 기존 과업의 WBS 메뉴도 함께 변경할지 확인합니다.</div>`,
+  ].join(""), async (f) => {
+    const newCode = f.get("code").trim();
+    if (!newCode) { toast("코드는 필수입니다.", true); return false; }
+    try {
+      if (newCode !== x.code) {
+        const used = await q(sb.from("wbs_tasks").select("id").eq("lv3_menu", x.code));
+        if (used.length && confirm(`이 코드를 참조하는 과업 ${used.length}건의 WBS 메뉴도 새 코드("${newCode}")로 함께 변경할까요?`)) {
+          await q(sb.from("wbs_tasks").update({ lv3_menu: newCode }).eq("lv3_menu", x.code));
+        }
+      }
+      await q(sb.from("wbs_codes").update({
+        lv1: f.get("lv1") || null, lv2: f.get("lv2") || null, code: newCode,
+        description: f.get("desc") || null, priority: parseFloat(f.get("pri")) || 0,
+      }).eq("id", id));
+      toast("WBS 수정 완료"); route();
+    } catch (_) { return false; }
+  });
+};
+
+window.wbsDel = async function (id) {
+  if (!isMaster()) return toast("팀장만 WBS를 삭제할 수 있습니다.", true);
+  const x = _wbsCodes.find(c => c.id === id);
+  if (!x) return;
+  let used = [];
+  try { used = await q(sb.from("wbs_tasks").select("id").eq("lv3_menu", x.code)); } catch (_) {}
+  let msg = `WBS 코드를 삭제할까요?\n"${x.code}"`;
+  if (used.length) msg += `\n\n⚠ 이 코드를 참조하는 과업이 ${used.length}건 있습니다.\n과업 데이터 자체는 삭제되지 않지만, 과업 등록 드롭다운에서는 사라집니다.`;
+  if (!confirm(msg)) return;
+  try { await q(sb.from("wbs_codes").delete().eq("id", id)); toast("삭제됨"); route(); } catch (_) {}
 };
 
 window.taskNew = function () {
