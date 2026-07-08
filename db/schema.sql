@@ -41,7 +41,8 @@ create table wbs_tasks (
   end_real date,                     -- 지연/조기 종료 시 입력 (Note 12)
   deliverable_no text,               -- 성과물 번호 참조
   progress numeric,                  -- 0.0 ~ 1.0
-  remark text,
+  holding boolean default false,     -- v7: 보류(Holding) 상태
+  remark text,                       -- v7: 팀장 코멘트 (기존 비고에서 전환, 팀장만 작성)
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );
