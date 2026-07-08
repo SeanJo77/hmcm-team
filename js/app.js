@@ -117,6 +117,7 @@ async function initAuth() {
   $("#btn-logout").addEventListener("click", async () => { await sb.auth.signOut(); toast("로그아웃"); route(); });
 }
 function renderAuth() {
+  document.body.classList.toggle("locked", !session);
   $("#auth-form").classList.toggle("hidden", !!session);
   $("#auth-user").classList.toggle("hidden", !session);
   if (session) {
@@ -131,14 +132,34 @@ function renderAuth() {
 const routes = {
   "/": vDashboard, "/tasks": vTasks, "/wbs": vWbsManage, "/issues": vIssues,
   "/weekly": vWeekly, "/daily": vDaily, "/deliverables": vDeliverables,
-  "/docs": vDocs, "/attendance": vAttendance, "/notes": vNotes,
+  "/docs": vDocs, "/attendance": vAttendance, "/suggest": vSuggest, "/notes": vNotes,
 };
+function renderLoginGate() {
+  app.innerHTML = `<div class="login-hero"><div class="login-card">
+    <div class="login-logo">HMCM · CM기획팀</div>
+    <h1>업무 관리 시스템</h1>
+    <p class="muted" style="margin-bottom:18px">로그인 후 이용할 수 있습니다.</p>
+    <form id="main-login">
+      <input type="text" id="ml-empno" placeholder="사번" autocomplete="username" required>
+      <input type="password" id="ml-pw" placeholder="비밀번호" autocomplete="current-password" required>
+      <button class="btn" type="submit" style="width:100%">로그인</button>
+    </form></div></div>`;
+  $("#main-login").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const empno = $("#ml-empno").value.trim().toLowerCase();
+    const { error } = await sb.auth.signInWithPassword({
+      email: empno + "@" + CONFIG.AUTH_DOMAIN, password: $("#ml-pw").value });
+    if (error) toast("로그인 실패: 사번 또는 비밀번호를 확인하세요.", true);
+    else { toast((CONFIG.USERS[empno]?.name || empno) + "님 환영합니다."); route(); }
+  });
+}
 async function route() {
   const hash = location.hash.replace(/^#/, "") || "/";
   document.querySelectorAll("#sidebar nav a").forEach(a => {
     const r = a.dataset.route;
     a.classList.toggle("active", r === "/" ? hash === "/" : hash.startsWith(r));
   });
+  if (!session) { renderLoginGate(); return; }
   app.innerHTML = '<div class="loading">불러오는 중…</div>';
   try {
     if (hash === "/issues/new") return await vIssueNew();
@@ -1175,7 +1196,7 @@ async function vAttendance() {
         ${types.map(tp => `<td>${m[tp] || ""}</td>`).join("")}
         <td><b>${Object.values(m).reduce((s, v) => s + v, 0)}</b></td></tr>`).join("") || `<tr><td colspan="9" class="muted">해당 월 근태 없음</td></tr>`}
       </tbody></table>`;
-    $("#att-body").innerHTML = f.map(x => `<tr ${x.att_date >= today() ? 'style="background:#fffbeb"' : ""}>
+    $("#att-body").innerHTML = f.map(x => `<tr ${x.att_date >= today() ? 'style="background:#F7F1E3"' : ""}>
       <td>${fmtD(x.att_date)}</td><td>${esc(x.name)}</td>
       <td><span class="badge ${x.att_type === "연차" ? "b-prog" : x.att_type === "출장" ? "b-go" : "b-warn"}">${esc(x.att_type)}</span></td>
       <td class="wrap">${esc(x.remark)}</td></tr>`).join("");
@@ -1211,6 +1232,34 @@ window.attAdd = function () {
   }, "등록");
 };
 
+/* ══ 건의사항 ══ */
+async function vSuggest() {
+  const rows = await q(sb.from("suggestions").select("*").order("created_at", { ascending: false }));
+  app.innerHTML = `
+  <h1>건의사항</h1><p class="page-sub">팀 운영·업무에 대한 건의를 자유롭게 남겨주세요.</p>
+  <div class="panel"><h2>건의 작성</h2>
+    <form id="sugg-form">
+      <div class="field"><textarea id="sugg-content" required placeholder="건의 내용을 입력하세요"></textarea></div>
+      <button class="btn" type="submit">등록</button>
+    </form></div>
+  <div class="panel"><h2>건의 목록 (${rows.length})</h2>
+    ${rows.map(sg => `<div class="comment">
+      <div class="meta"><b>${esc(sg.author)}</b> · ${String(sg.created_at).slice(0, 16).replace("T", " ")}
+        ${(sg.author === me().name || isMaster()) ? `<button class="btn sm ghost" onclick="suggDel(${sg.id})">삭제</button>` : ""}</div>
+      <div class="body">${esc(sg.content)}</div></div>`).join("") || '<p class="muted">아직 건의사항이 없습니다.</p>'}
+  </div>`;
+  $("#sugg-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const content = $("#sugg-content").value.trim();
+    if (!content) return;
+    try { await q(sb.from("suggestions").insert({ author: me().name, content })); toast("건의가 등록되었습니다."); route(); } catch (_) {}
+  });
+}
+window.suggDel = async function (id) {
+  if (!confirm("건의를 삭제할까요?")) return;
+  try { await q(sb.from("suggestions").delete().eq("id", id)); toast("삭제됨"); route(); } catch (_) {}
+};
+
 /* ══ 운영 규칙 ══ */
 let _notes = [];
 async function vNotes() {
@@ -1237,7 +1286,7 @@ window.noteAdd = function () {
 window.noteEdit = function (id) {
   if (!isMaster()) return toast("팀장만 수정할 수 있습니다.", true);
   const n = _notes.find(x => x.id === id); if (!n) return;
-  modal("규칙 수정 — 전달 " + (n.no ?? ""), fld("내용", `<textarea name="c" required>${esc(n.content)}</textarea>`), async (f) => {
+  modal("규칙 수정", fld("내용", `<textarea name="c" required>${esc(n.content)}</textarea>`), async (f) => {
     try { await q(sb.from("notes").update({ content: f.get("c") }).eq("id", id)); toast("수정 완료"); route(); }
     catch (_) { return false; }
   });
