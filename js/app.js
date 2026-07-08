@@ -1112,24 +1112,14 @@ let _notes = [];
 async function vNotes() {
   const notes = await q(sb.from("notes").select("*").order("no"));
   _notes = notes;
-  const sysRules = [
-    ["이슈", "안건(1문장) → 질의(번호 목록) → 본인생각(1:1 대응) 순으로 작성. GO 제출 시 자동 잠금, 추가 의견은 댓글로."],
-    ["일정", "Start·End(plan)는 최초 입력 후 수정 불가. 진행률 100% 처리 시 End(real) 필수 — 지연/조기는 시스템 자동 판정."],
-    ["일일 기록", "회사 ERP 원본 유지 — 본 사이트는 조회·집계 전용."],
-    ["협업", "댓글 + Slack 알림 (GO 제출 / 피드백 등록 / @멘션)."],
-    ["회의", "매주 월 09:00 주간 계획/실적 회의 · 금 17:00 주간 업무 정리."],
-    ["시간", "회의 없는 시간 09~10시·15~17시 / 회의 가능 시간 10~12시·13~15시."],
-    ["근태", "연장근무 신청은 해당 일 16:00까지."],
-  ];
   app.innerHTML = `
-  <h1>운영 규칙</h1><p class="page-sub">CM기획팀 운영 규칙 — 시스템 강제 항목은 사이트에서 자동 적용됩니다.</p>
+  <h1>운영 규칙</h1><p class="page-sub">CM기획팀 운영 규칙</p>
   ${isMaster() ? `<div class="row"><button class="btn" onclick="noteAdd()">+ 규칙 추가 (팀장 전용)</button></div>` : ""}
   <div class="panel">
-    <table><thead><tr><th style="width:90px">구분</th><th>규칙</th>${isMaster() ? '<th style="width:110px"></th>' : ""}</tr></thead><tbody>
-    ${sysRules.map(([cat, txt]) => `<tr><td><span class="badge b-go">${cat}</span></td><td class="wrap">${esc(txt)}</td>${isMaster() ? "<td></td>" : ""}</tr>`).join("")}
-    ${notes.map(n => `<tr><td><span class="badge b-gray">전달 ${n.no ?? ""}</span></td><td class="wrap">${esc(n.content)}</td>
+    <table><thead><tr><th style="width:60px">순번</th><th>규칙</th>${isMaster() ? '<th style="width:110px"></th>' : ""}</tr></thead><tbody>
+    ${notes.map((n, i) => `<tr><td><b>${i + 1}</b></td><td class="wrap">${esc(n.content)}</td>
       ${isMaster() ? `<td style="white-space:nowrap"><button class="btn sm ghost" onclick="noteEdit(${n.id})">수정</button>
-        <button class="btn sm ghost" style="color:var(--danger)" onclick="noteDel(${n.id})">삭제</button></td>` : ""}</tr>`).join("")}
+        <button class="btn sm ghost" style="color:var(--danger)" onclick="noteDel(${n.id})">삭제</button></td>` : ""}</tr>`).join("") || `<tr><td colspan="3" class="muted">등록된 규칙이 없습니다.</td></tr>`}
     </tbody></table></div>`;
 }
 window.noteAdd = function () {
