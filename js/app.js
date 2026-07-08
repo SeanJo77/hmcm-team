@@ -43,6 +43,13 @@ window.changePw = function () {
 };
 const isMaster = () => me()?.role === "master";
 const hhmm = (ts) => ts ? String(ts).slice(11, 16) : "";
+/* 수정·삭제 권한: 해당 건의 담당자(owner) 또는 팀장(master)만 */
+const canEditOwn = (owner) => !!session && (isMaster() || (!!me() && me().name === owner));
+function guardEdit(owner) {
+  if (canEditOwn(owner)) return true;
+  toast("해당 건의 담당자 또는 팀장만 수정·삭제할 수 있습니다.", true);
+  return false;
+}
 
 /* ── 알림 (in-app notifications) ─────────────── */
 let _notifs = [];
@@ -290,6 +297,7 @@ async function vDashboard() {
   });
 }
 window.noticeDel = async function (id) {
+  if (!isMaster()) return toast("공지 삭제는 팀장만 가능합니다.", true);
   if (!confirm("공지를 삭제할까요?")) return;
   try { await q(sb.from("notices").delete().eq("id", id)); toast("삭제됨"); route(); } catch (_) {}
 };
@@ -380,8 +388,8 @@ async function vTasks() {
           <td>${x.end_real ? fmtD(x.end_real) + (x.end_plan && x.end_real > x.end_plan ? ' <span class="badge b-late">지연</span>' : x.end_plan && x.end_real < x.end_plan ? ' <span class="badge b-done">조기</span>' : "") : '<span class="muted">-</span>'}</td>
           <td>${progBar(x.progress)}</td>
           <td>${gantt(x)}</td>
-          ${canWrite() ? `<td style="white-space:nowrap"><button class="btn sm ghost" onclick="taskEdit(${x.id})">수정</button>
-            <button class="btn sm ghost" style="color:var(--danger)" onclick="taskDel(${x.id})">삭제</button></td>` : ""}
+          ${canWrite() ? `<td style="white-space:nowrap">${canEditOwn(x.assignee) ? `<button class="btn sm ghost" onclick="taskEdit(${x.id})">수정</button>
+            <button class="btn sm ghost" style="color:var(--danger)" onclick="taskDel(${x.id})">삭제</button>` : `<span class="muted">-</span>`}</td>` : ""}
         </tr>`).join("")}
         </tbody></table></div>
       </details>`).join("");
@@ -559,9 +567,9 @@ window.taskNew = function () {
 };
 
 window.taskEdit = function (id) {
-  if (!canWrite()) return needLogin();
   const x = _tasks.find(t => t.id === id);
   if (!x) return;
+  if (!guardEdit(x.assignee)) return;
   modal("과업 수정", [
     fld("상세 업무 내용", `<input type="text" name="lv6" style="width:100%" value="${esc(x.lv6_content || "")}">`),
     `<div class="row">` +
@@ -585,8 +593,8 @@ window.taskEdit = function (id) {
 };
 
 window.taskDel = async function (id) {
-  if (!canWrite()) return needLogin();
   const x = _tasks.find(t => t.id === id);
+  if (!guardEdit(x?.assignee)) return;
   if (!confirm(`과업을 삭제할까요?\n"${(x?.lv6_content || "").slice(0, 50)}"`)) return;
   try { await q(sb.from("wbs_tasks").delete().eq("id", id)); toast("삭제됨"); route(); } catch (_) {}
 };
@@ -646,6 +654,7 @@ async function vIssueDetail(id) {
   _issueCache = x;
   const myImgs = imgs.filter(i => x.seq != null && +i.issue_seq === +x.seq);
   const locked = x.request_go && x.request_go.startsWith("GO");
+  const canEd = canEditOwn(x.assignee);
   const comments = await q(sb.from("comments").select("*").eq("target_table", "wbs_issues").eq("target_id", id).order("created_at"));
 
   const block = (title, body, full = false) =>
@@ -660,22 +669,22 @@ async function vIssueDetail(id) {
     ${block("질의 사항 / 요청사항", x.question)}
     ${block("본인의 생각", x.opinion)}
     ${block("참고 자료", x.ref_material)}
-    <div class="issue-block"><h3>피드백 ${canWrite() ? `<button class="btn sm ghost" onclick="issueFeedback(${x.id})">✎ 입력/수정</button>` : ""}</h3>
+    <div class="issue-block"><h3>피드백 ${canEd ? `<button class="btn sm ghost" onclick="issueFeedback(${x.id})">✎ 입력/수정</button>` : ""}</h3>
       <div class="body">${esc(x.feedback) || '<span class="muted">-</span>'}</div></div>
     ${myImgs.length ? `<div class="issue-block full"><h3>첨부 이미지</h3>${myImgs.map(i => `<img class="issue-img" src="${esc(i.image_path)}" loading="lazy">`).join("")}</div>` : ""}
   </div>
   <div class="row" style="margin-top:14px">
-    ${canWrite() && !locked && x.request_go !== "Cancel" ? `<button class="btn" onclick="issueGo(${x.id}, null)">GO 제출 (검토 요청)</button>` : ""}
-    ${canWrite() && locked && x.status !== "완료" ? `
+    ${canEd && !locked && x.request_go !== "Cancel" ? `<button class="btn" onclick="issueGo(${x.id}, null)">GO 제출 (검토 요청)</button>` : ""}
+    ${canEd && locked && x.status !== "완료" ? `
       <button class="btn ghost" onclick="issueGo(${x.id}, '${esc(x.request_go)}')">재질의 (GO*n)</button>
       <button class="btn ghost" onclick="issueClose(${x.id})">완료 처리</button>` : ""}
-    ${canWrite() ? `<button class="btn ghost" style="color:var(--danger)" onclick="issueDel(${x.id})">이슈 삭제</button>` : ""}
+    ${canEd ? `<button class="btn ghost" style="color:var(--danger)" onclick="issueDel(${x.id})">이슈 삭제</button>` : ""}
     <a class="btn ghost" href="#/issues" style="text-decoration:none">← 목록</a>
   </div>
   <div class="panel" style="margin-top:18px"><h2>댓글 ${comments.length ? `(${comments.length})` : ""}</h2>
     <div id="cmt-list">${comments.map(c => `<div class="comment">
       <div class="meta"><b>${esc(c.author)}</b>${c.mention ? ` → @${esc(c.mention)}` : ""} · ${String(c.created_at).slice(0, 16).replace("T", " ")}
-        ${canWrite() && (c.author === me().name || isMaster()) ? `<button class="btn sm ghost" onclick="cmtDel(${c.id}, ${id})">삭제</button>` : ""}</div>
+        ${canWrite() && (c.author === me().name || isMaster()) ? `<button class="btn sm ghost" onclick="cmtDel(${c.id}, ${id}, '${esc(c.author)}')">삭제</button>` : ""}</div>
       <div class="body">${esc(c.content)}</div></div>`).join("") || '<p class="muted">댓글 없음</p>'}
     </div>
     ${canWrite() ? `
@@ -700,12 +709,14 @@ async function vIssueDetail(id) {
   });
 }
 
-window.cmtDel = async function (cid, issueId) {
+window.cmtDel = async function (cid, issueId, author) {
+  if (!guardEdit(author)) return;
   if (!confirm("댓글을 삭제할까요?")) return;
   try { await q(sb.from("comments").delete().eq("id", cid)); toast("댓글 삭제됨"); vIssueDetail(issueId); } catch (_) {}
 };
 window.issueDel = async function (id) {
-  if (!canWrite()) return needLogin();
+  const x = _issueCache && _issueCache.id === id ? _issueCache : null;
+  if (!guardEdit(x?.assignee)) return;
   if (!confirm("이 이슈를 삭제할까요? 댓글도 함께 삭제됩니다.")) return;
   try {
     await q(sb.from("comments").delete().eq("target_table", "wbs_issues").eq("target_id", id));
@@ -714,7 +725,8 @@ window.issueDel = async function (id) {
   } catch (_) {}
 };
 window.issueGo = async function (id, cur) {
-  if (!canWrite()) return needLogin();
+  const xg = _issueCache && _issueCache.id === id ? _issueCache : null;
+  if (!guardEdit(xg?.assignee)) return;
   if (!cur) {
     // 최초 GO 제출
     if (!confirm("GO 제출 시 안건/질의/본인생각이 잠깁니다. 제출할까요?")) return;
@@ -743,8 +755,9 @@ window.issueGo = async function (id, cur) {
   }, next + " 제출");
 };
 window.issueFeedback = function (id) {
-  if (!canWrite()) return needLogin();
-  const cur = _issueCache && _issueCache.id === id ? (_issueCache.feedback || "") : "";
+  const xf = _issueCache && _issueCache.id === id ? _issueCache : null;
+  if (!guardEdit(xf?.assignee)) return;
+  const cur = xf ? (xf.feedback || "") : "";
   modal("피드백 입력/수정", fld("피드백 내용", `<textarea name="fb" style="min-height:140px" required>${esc(cur)}</textarea>`),
     async (f) => {
       try {
@@ -754,7 +767,8 @@ window.issueFeedback = function (id) {
     });
 };
 window.issueClose = async function (id) {
-  if (!canWrite()) return needLogin();
+  const xc = _issueCache && _issueCache.id === id ? _issueCache : null;
+  if (!guardEdit(xc?.assignee)) return;
   if (!confirm("이 이슈를 완료 처리할까요?")) return;
   try { await q(sb.from("wbs_issues").update({ status: "완료" }).eq("id", id)); toast("완료 처리됨"); vIssueDetail(id); } catch (_) {}
 };
@@ -840,7 +854,7 @@ async function vWeekly() {
     <summary><b>${esc(mg.mon)}</b> <span class="muted">${mg.weeks.length}주차</span></summary>
     ${mg.weeks.map((w, wi) => `<details class="week-detail" ${mi === 0 && wi === 0 ? "open" : ""}>
       <summary>${esc(w.label)} <small class="muted">${fmtD(w.start)} ~ ${fmtD(w.end)}</small>
-        ${canWrite() ? `<span style="margin-left:auto;white-space:nowrap">
+        ${isMaster() ? `<span style="margin-left:auto;white-space:nowrap">
           <button type="button" class="btn sm ghost" onclick="event.stopPropagation();event.preventDefault();weekDates('${esc(w.label)}')">날짜 변경</button>
           <button type="button" class="btn sm ghost" style="color:var(--danger)" onclick="event.stopPropagation();event.preventDefault();weekDel('${esc(w.label)}')">주차 삭제</button></span>` : ""}
       </summary>
@@ -887,7 +901,7 @@ window.weekCellEdit = function (label, member, cat) {
 };
 
 window.weekDates = function (label) {
-  if (!canWrite()) return needLogin();
+  if (!isMaster()) return toast("주차 날짜 변경은 팀장만 가능합니다.", true);
   const w = _weeklyWeeks[label];
   if (!w) return;
   modal("주차 날짜 변경 — " + label, `<div class="row">` +
@@ -901,7 +915,7 @@ window.weekDates = function (label) {
     });
 };
 window.weekDel = async function (label) {
-  if (!canWrite()) return needLogin();
+  if (!isMaster()) return toast("주차 삭제는 팀장만 가능합니다.", true);
   if (!confirm(`"${label}" 주차 전체를 삭제할까요? (전 팀원 DONE/ISSUE/PLAN 내용 포함)`)) return;
   try {
     await q(sb.from("weekly_summaries").delete().eq("week_label", label));
@@ -1227,7 +1241,7 @@ async function vDocs() {
       <td>${(f.created_at || "").slice(0, 10)}</td>
       <td><button class="btn sm" onclick="docView('${esc(f.name)}')">보기</button>
           <a class="btn sm ghost" style="text-decoration:none" href="${esc(pub(f.name))}" target="_blank" rel="noopener">새 창 ↗</a></td>
-      ${canWrite() ? `<td><button class="btn sm ghost" style="color:var(--danger)" onclick="docDel('${esc(f.name)}')">삭제</button></td>` : ""}
+      ${isMaster() ? `<td><button class="btn sm ghost" style="color:var(--danger)" onclick="docDel('${esc(f.name)}')">삭제</button></td>` : ""}
     </tr>`).join("") || `<tr><td colspan="5" class="muted">문서가 없습니다. 첫 문서를 업로드하세요.</td></tr>`}
     </tbody></table></div>
   <div id="doc-viewer" class="panel hidden" style="margin-top:16px">
@@ -1290,6 +1304,7 @@ window.docView = async function (name) {
   viewer.scrollIntoView({ behavior: "smooth" });
 };
 window.docDel = async function (name) {
+  if (!isMaster()) return toast("자료 삭제는 팀장만 가능합니다.", true);
   if (!confirm("문서를 삭제할까요?")) return;
   const { error } = await sb.storage.from("files").remove(["docs/" + name]);
   if (error) toast("삭제 실패: " + error.message, true);
@@ -1366,7 +1381,7 @@ async function vSuggest() {
   <div class="panel"><h2>건의 목록 (${rows.length})</h2>
     ${rows.map(sg => `<div class="comment">
       <div class="meta"><b>${esc(sg.author)}</b> · ${String(sg.created_at).slice(0, 16).replace("T", " ")}
-        ${(sg.author === me().name || isMaster()) ? `<button class="btn sm ghost" onclick="suggDel(${sg.id})">삭제</button>` : ""}</div>
+        ${(sg.author === me().name || isMaster()) ? `<button class="btn sm ghost" onclick="suggDel(${sg.id}, '${esc(sg.author)}')">삭제</button>` : ""}</div>
       <div class="body">${esc(sg.content)}</div></div>`).join("") || '<p class="muted">아직 건의사항이 없습니다.</p>'}
   </div>`;
   $("#sugg-form").addEventListener("submit", async (e) => {
@@ -1376,7 +1391,8 @@ async function vSuggest() {
     try { await q(sb.from("suggestions").insert({ author: me().name, content })); toast("건의가 등록되었습니다."); route(); } catch (_) {}
   });
 }
-window.suggDel = async function (id) {
+window.suggDel = async function (id, author) {
+  if (!guardEdit(author)) return;
   if (!confirm("건의를 삭제할까요?")) return;
   try { await q(sb.from("suggestions").delete().eq("id", id)); toast("삭제됨"); route(); } catch (_) {}
 };
