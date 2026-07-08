@@ -42,6 +42,49 @@ window.changePw = function () {
   }, "변경");
 };
 const isMaster = () => me()?.role === "master";
+const hhmm = (ts) => ts ? String(ts).slice(11, 16) : "";
+
+/* ── 알림 (in-app notifications) ─────────────── */
+let _notifs = [];
+async function loadNotifs() {
+  const bell = $("#notif-bell");
+  if (!session) { _notifs = []; if (bell) { bell.classList.add("hidden"); bell.innerHTML = ""; } return; }
+  try {
+    _notifs = await q(sb.from("notifications").select("*").eq("recipient", me().name).order("created_at", { ascending: false }).limit(50));
+  } catch (_) { _notifs = []; }
+  renderNotifBell();
+}
+function renderNotifBell() {
+  const el = $("#notif-bell"); if (!el) return;
+  if (!session) { el.classList.add("hidden"); el.innerHTML = ""; return; }
+  el.classList.remove("hidden");
+  const unread = _notifs.filter(n => !n.is_read).length;
+  el.innerHTML = `<button type="button" class="notif-btn ${unread ? "has-unread" : ""}" onclick="openNotifModal()">🔔 알림${unread ? ` <span class="notif-badge">${unread}</span>` : ""}</button>`;
+}
+window.openNotifModal = function () {
+  const body = _notifs.length ? _notifs.map(n => `<div class="notif-item ${n.is_read ? "" : "unread"}" ${n.link ? `onclick="notifOpen(${n.id}, '${esc(n.link)}')"` : `onclick="notifOpen(${n.id}, '')"`}>
+      <div class="notif-msg">${esc(n.message)}</div>
+      <div class="notif-time">${String(n.created_at).slice(0, 16).replace("T", " ")}${n.is_read ? "" : ' <span class="badge b-warn">NEW</span>'}</div>
+    </div>`).join("") : '<p class="muted">알림이 없습니다.</p>';
+  const foot = _notifs.some(n => !n.is_read) ? `<div class="row" style="margin-top:12px;margin-bottom:0"><button class="btn sm ghost" onclick="notifReadAll()">모두 읽음</button></div>` : "";
+  modal("🔔 알림", body + foot, null);
+};
+window.notifOpen = async function (id, link) {
+  try { await q(sb.from("notifications").update({ is_read: true }).eq("id", id)); } catch (_) {}
+  document.querySelectorAll(".modal-back").forEach(w => w.remove());
+  await loadNotifs();
+  if (link) { location.hash = link; route(); }
+};
+window.notifReadAll = async function () {
+  try { await q(sb.from("notifications").update({ is_read: true }).eq("recipient", me().name).eq("is_read", false)); } catch (_) {}
+  document.querySelectorAll(".modal-back").forEach(w => w.remove());
+  await loadNotifs();
+  toast("모든 알림을 읽음 처리했습니다.");
+};
+async function notify(recipient, message, link, type) {
+  if (!recipient || !me() || recipient === me().name) return;
+  try { await sb.from("notifications").insert({ recipient, actor: me().name, type: type || null, message, link: link || null }); } catch (_) {}
+}
 
 /* 범용 모달 */
 function modal(title, bodyHtml, onSubmit, submitLabel = "저장") {
@@ -126,6 +169,7 @@ function renderAuth() {
       `<br><small class="muted">${esc(u.empno)} · CM기획팀</small>` +
       `<br><a href="javascript:changePw()" style="color:#93c5fd;font-size:11px">비밀번호 변경</a>`;
   }
+  loadNotifs();
 }
 
 /* ── router ───────────────────────────────────── */
@@ -160,6 +204,7 @@ async function route() {
     a.classList.toggle("active", r === "/" ? hash === "/" : hash.startsWith(r));
   });
   if (!session) { renderLoginGate(); return; }
+  loadNotifs();
   app.innerHTML = '<div class="loading">불러오는 중…</div>';
   try {
     if (hash === "/issues/new") return await vIssueNew();
@@ -173,12 +218,15 @@ async function route() {
 
 /* ══ 대시보드 ══ */
 async function vDashboard() {
-  const [notices, tasks, issues, att] = await Promise.all([
+  const [notices, tasks, issues, att, cmts] = await Promise.all([
     q(sb.from("notices").select("*").order("created_at", { ascending: false }).limit(5)),
     q(sb.from("wbs_tasks").select("*")),
     q(sb.from("wbs_issues").select("*")),
     q(sb.from("attendance").select("*").gte("att_date", today()).order("att_date").limit(12)),
+    q(sb.from("comments").select("target_id").eq("target_table", "wbs_issues")),
   ]);
+  const cmtCount = {};
+  for (const c of cmts) cmtCount[c.target_id] = (cmtCount[c.target_id] || 0) + 1;
   const t = today();
   const openTasks = tasks.filter(x => (x.progress ?? 0) < 1)
     .sort((a, b) => (a.end_plan || "9999").localeCompare(b.end_plan || "9999"));
@@ -209,10 +257,17 @@ async function vDashboard() {
 
   <div class="panel"><h2>미해결 이슈 (${openIssues.length})</h2>${openIssues.length ? `
     <div class="tbl-wrap" style="max-height:none"><table><thead><tr><th>일자</th><th>담당</th><th>안건</th><th>요청</th><th>상태</th></tr></thead><tbody>
-    ${openIssues.map(x => `<tr><td>${fmtD(x.issue_date)}</td><td>${esc(x.assignee)}</td>
-      <td class="wrap"><a class="link" href="#/issues/${x.id}">${esc((x.agenda || x.question || "").slice(0, 90)) || "(무제)"}</a></td>
+    ${openIssues.map(x => `<tr><td>${fmtD(x.issue_date)}${x.created_at ? `<br><small class="muted">${hhmm(x.created_at)}</small>` : ""}</td><td>${esc(x.assignee)}</td>
+      <td class="wrap"><a class="link" href="#/issues/${x.id}">${esc((x.agenda || x.question || "").slice(0, 90)) || "(무제)"}</a>${cmtCount[x.id] ? ` <span class="cmt-badge" title="댓글 ${cmtCount[x.id]}개">💬 ${cmtCount[x.id]}</span>` : ""}</td>
       <td>${goBadge(x.request_go)}</td><td>${issueStatusBadge(x)}</td></tr>`).join("")}
     </tbody></table></div>` : '<p class="muted">모든 이슈가 완료되었습니다.</p>'}
+  </div>
+
+  <div class="panel"><h2>다가오는 근태</h2>${att.length ? `
+    <table><thead><tr><th>날짜</th><th>이름</th><th>구분</th><th>비고</th></tr></thead><tbody>
+    ${att.map(x => `<tr><td>${fmtD(x.att_date)}</td><td>${esc(x.name)}</td>
+      <td><span class="badge b-warn">${esc(x.att_type)}</span></td><td>${esc(x.remark)}</td></tr>`).join("")}
+    </tbody></table>` : '<p class="muted">예정 없음</p>'}
   </div>
 
   <div class="panel"><h2>진행 중 과업 (${openTasks.length}) <small class="muted">— 기한 경과 ${late.length}건 강조</small></h2>
@@ -223,13 +278,6 @@ async function vDashboard() {
       <td>${x.end_plan && x.end_plan < t ? `<span class="badge b-late">${fmtD(x.end_plan)}</span>` : fmtD(x.end_plan)}</td>
       <td>${progBar(x.progress)}</td></tr>`).join("")}
     </tbody></table></div>
-  </div>
-
-  <div class="panel"><h2>다가오는 근태</h2>${att.length ? `
-    <table><thead><tr><th>날짜</th><th>이름</th><th>구분</th><th>비고</th></tr></thead><tbody>
-    ${att.map(x => `<tr><td>${fmtD(x.att_date)}</td><td>${esc(x.name)}</td>
-      <td><span class="badge b-warn">${esc(x.att_type)}</span></td><td>${esc(x.remark)}</td></tr>`).join("")}
-    </tbody></table>` : '<p class="muted">예정 없음</p>'}
   </div>`;
 
   const nf = $("#notice-form");
@@ -545,7 +593,12 @@ window.taskDel = async function (id) {
 
 /* ══ WBS별 이슈 ══ */
 async function vIssues() {
-  const issues = await q(sb.from("wbs_issues").select("*").order("id", { ascending: true }));
+  const [issues, cmts] = await Promise.all([
+    q(sb.from("wbs_issues").select("*").order("id", { ascending: true })),
+    q(sb.from("comments").select("target_id").eq("target_table", "wbs_issues")),
+  ]);
+  const cmtCount = {};
+  for (const c of cmts) cmtCount[c.target_id] = (cmtCount[c.target_id] || 0) + 1;
   issues.sort((a, b) => (b.issue_date || "").localeCompare(a.issue_date || "") || b.id - a.id);
   const state = { assignee: "", status: "", kw: "" };
 
@@ -559,8 +612,8 @@ async function vIssues() {
       rows = rows.filter(x => ((x.agenda || "") + " " + (x.question || "") + " " + (x.opinion || "") + " " + (x.feedback || "")).toLowerCase().includes(k));
     }
     $("#issue-body").innerHTML = rows.map(x => `<tr>
-      <td>${fmtD(x.issue_date)}</td><td>${esc(x.assignee)}</td>
-      <td class="wrap"><a class="link" href="#/issues/${x.id}">${esc((x.agenda || x.question || "").slice(0, 90)) || "(무제)"}</a></td>
+      <td>${fmtD(x.issue_date)}${x.created_at ? `<br><small class="muted">${hhmm(x.created_at)}</small>` : ""}</td><td>${esc(x.assignee)}</td>
+      <td class="wrap"><a class="link" href="#/issues/${x.id}">${esc((x.agenda || x.question || "").slice(0, 90)) || "(무제)"}</a>${cmtCount[x.id] ? ` <span class="cmt-badge" title="댓글 ${cmtCount[x.id]}개">💬 ${cmtCount[x.id]}</span>` : ""}</td>
       <td>${goBadge(x.request_go)}</td><td>${issueStatusBadge(x)}</td></tr>`).join("");
     $("#issue-count").textContent = rows.length + "건 (미해결 " + rows.filter(x => !issueClosed(x)).length + ")";
   }
@@ -600,7 +653,7 @@ async function vIssueDetail(id) {
 
   app.innerHTML = `
   <h1>이슈 상세 <small class="muted">#${x.seq ?? x.id}</small></h1>
-  <p class="page-sub">${fmtD(x.issue_date)} · ${esc(x.assignee || "")} · ${goBadge(x.request_go)} ${issueStatusBadge(x)}</p>
+  <p class="page-sub">${fmtD(x.issue_date)}${x.created_at ? ` <small class="muted">${hhmm(x.created_at)} 작성</small>` : ""} · ${esc(x.assignee || "")} · ${goBadge(x.request_go)} ${issueStatusBadge(x)}</p>
   ${locked ? '<div class="lock-notice">🔒 GO 제출됨 — 안건/질의/본인생각은 수정할 수 없습니다. 추가 의견은 댓글로.</div>' : ""}
   <div class="issue-grid">
     ${block("안건 (왜 논의가 필요한가)", x.agenda, true)}
@@ -638,9 +691,11 @@ async function vIssueDetail(id) {
     e.preventDefault();
     const content = $("#cmt-content").value.trim();
     if (!content) return;
+    const mention = $("#f-cmt-mention").value || null;
     try {
-      await q(sb.from("comments").insert({ target_table: "wbs_issues", target_id: id, author: me().name, mention: $("#f-cmt-mention").value || null, content }));
-      toast("댓글 등록 완료"); vIssueDetail(id);
+      await q(sb.from("comments").insert({ target_table: "wbs_issues", target_id: id, author: me().name, mention, content }));
+      if (mention) await notify(mention, `${me().name}님이 이슈 #${x.seq ?? id} 댓글에서 회원님을 멘션했습니다: "${content.slice(0, 30)}"`, `#/issues/${id}`, "mention");
+      toast("댓글 등록 완료" + (mention ? " · 알림 발송" : "")); vIssueDetail(id);
     } catch (_) {}
   });
 }
@@ -743,10 +798,15 @@ async function vIssueNew() {
 }
 
 /* ══ 주간 업무 요약 — 본인 셀 직접 작성/수정 + 주차 추가 ══ */
-let _weeklyRows = [], _weeklyWeeks = {};
+let _weeklyRows = [], _weeklyWeeks = {}, _weekCmts = {};
 async function vWeekly() {
-  const rows = await q(sb.from("weekly_summaries").select("*").order("week_start", { ascending: false }));
+  const [rows, cc] = await Promise.all([
+    q(sb.from("weekly_summaries").select("*").order("week_start", { ascending: false })),
+    q(sb.from("card_comments").select("*").eq("scope", "weekly").order("created_at")),
+  ]);
   _weeklyRows = rows;
+  _weekCmts = {};
+  for (const c of cc) (_weekCmts[c.card_key] = _weekCmts[c.card_key] || []).push(c);
   const weekMap = {}; const weeks = [];
   for (const r of rows) {
     if (!weekMap[r.week_label]) { weekMap[r.week_label] = { label: r.week_label, start: r.week_start, end: r.week_end, cells: {} }; weeks.push(weekMap[r.week_label]); }
@@ -794,6 +854,15 @@ async function vWeekly() {
             return `<div class="week-cell ${canEd ? "editable" : ""}"
               ${canEd ? `onclick="weekCellEdit('${esc(w.label)}','${esc(m)}','${c}')" title="클릭하여 작성/수정"` : ""}>${esc(cell?.content || "")}${canEd ? '<span class="cell-pen">✎</span>' : ""}</div>`;
           }).join("")).join("")}
+        <div class="week-cell week-cat"><span class="badge b-go">팀장</span></div>
+        ${members.map(m => {
+          const key = w.label + "|" + m;
+          const list = _weekCmts[key] || [];
+          return `<div class="week-cell wk-cmt">
+            ${list.map(c => `<div class="cardcmt"><div class="cardcmt-b">${esc(c.content)}</div>${isMaster() ? `<button type="button" class="cardcmt-x" onclick="weekCmtDel(${c.id})">✕</button>` : ""}</div>`).join("")}
+            ${isMaster() ? `<button type="button" class="btn sm ghost" onclick="weekCmtAdd('${esc(w.label)}','${esc(m)}')">+ 코멘트</button>` : (list.length ? "" : '<span class="muted" style="font-size:11px">-</span>')}
+          </div>`;
+        }).join("")}
       </div></details>`).join("")}
   </details>`).join("") || '<div class="panel muted">주차가 없습니다. [+ 주차 추가]로 시작하세요.</div>'}`;
 }
@@ -864,7 +933,27 @@ window.weekAdd = function () {
   }, "주차 생성");
 };
 
+window.weekCmtAdd = function (label, member) {
+  if (!isMaster()) return toast("팀장만 코멘트를 남길 수 있습니다.", true);
+  modal(`팀장 코멘트 — ${label} · ${member}`,
+    fld("코멘트", `<textarea name="c" required placeholder="${esc(member)}님 주간 업무에 대한 코멘트"></textarea>`),
+    async (f) => {
+      const content = f.get("c").trim(); if (!content) return false;
+      try {
+        await q(sb.from("card_comments").insert({ scope: "weekly", card_key: label + "|" + member, author: me().name, content }));
+        await notify(member, `${me().name} 팀장이 '${label}' 주간 업무에 코멘트를 남겼습니다.`, "#/weekly", "weekly_comment");
+        toast("코멘트 등록 · 알림 발송"); route();
+      } catch (_) { return false; }
+    }, "등록");
+};
+window.weekCmtDel = async function (id) {
+  if (!isMaster()) return toast("팀장만 삭제할 수 있습니다.", true);
+  if (!confirm("코멘트를 삭제할까요?")) return;
+  try { await q(sb.from("card_comments").delete().eq("id", id)); toast("삭제됨"); route(); } catch (_) {}
+};
+
 /* ══ 일일 기록 ══ */
+let _dailyCmts = {};
 async function vDaily() {
   let rows = []; let page = 0;
   while (true) {
@@ -873,6 +962,11 @@ async function vDaily() {
     if (chunk.length < 1000 || page >= 9) break;
     page++;
   }
+  _dailyCmts = {};
+  try {
+    const cc = await q(sb.from("card_comments").select("*").eq("scope", "daily").order("created_at"));
+    for (const c of cc) (_dailyCmts[c.card_key] = _dailyCmts[c.card_key] || []).push(c);
+  } catch (_) {}
   for (const r of rows) {
     if (!r.week_label && r.log_date) {
       const d = new Date(r.log_date);
@@ -920,6 +1014,14 @@ async function vDaily() {
               </div>
               ${taskRow(top)}
               ${rest.length ? `<div id="${uid}" style="display:none">${rest.map(taskRow).join("")}</div>` : ""}
+              ${(() => {
+                const cmts2 = _dailyCmts[dt + "|" + mem] || [];
+                if (!cmts2.length && !isMaster()) return "";
+                return `<div class="daily-cmts">
+                  ${cmts2.map(c => `<div class="cardcmt"><span class="badge b-go">팀장</span> <span class="cardcmt-b">${esc(c.content)}</span>${isMaster() ? `<button type="button" class="cardcmt-x" onclick="dailyCmtDel(${c.id})">✕</button>` : ""}</div>`).join("")}
+                  ${isMaster() ? `<button type="button" class="btn sm ghost cardcmt-add" onclick="dailyCmtAdd('${dt}','${esc(mem)}')">+ 팀장 코멘트</button>` : ""}
+                </div>`;
+              })()}
             </div>`;
           }).join("")}
           </div></details>`;
@@ -970,6 +1072,25 @@ window.dailyAdd = function () {
       toast("기록 입력 완료"); route();
     } catch (_) { return false; }
   }, "입력");
+};
+
+window.dailyCmtAdd = function (dt, member) {
+  if (!isMaster()) return toast("팀장만 코멘트를 남길 수 있습니다.", true);
+  modal(`팀장 코멘트 — ${dt} · ${member}`,
+    fld("코멘트", `<textarea name="c" required placeholder="${esc(member)}님 ${dt} 업무에 대한 코멘트"></textarea>`),
+    async (f) => {
+      const content = f.get("c").trim(); if (!content) return false;
+      try {
+        await q(sb.from("card_comments").insert({ scope: "daily", card_key: dt + "|" + member, author: me().name, content }));
+        await notify(member, `${me().name} 팀장이 ${dt} 일일 기록에 코멘트를 남겼습니다.`, "#/daily", "daily_comment");
+        toast("코멘트 등록 · 알림 발송"); route();
+      } catch (_) { return false; }
+    }, "등록");
+};
+window.dailyCmtDel = async function (id) {
+  if (!isMaster()) return toast("팀장만 삭제할 수 있습니다.", true);
+  if (!confirm("코멘트를 삭제할까요?")) return;
+  try { await q(sb.from("card_comments").delete().eq("id", id)); toast("삭제됨"); route(); } catch (_) {}
 };
 
 /* ══ 성과물 · 참고자료 ══ */
@@ -1286,7 +1407,7 @@ window.noteAdd = function () {
 window.noteEdit = function (id) {
   if (!isMaster()) return toast("팀장만 수정할 수 있습니다.", true);
   const n = _notes.find(x => x.id === id); if (!n) return;
-  modal("규칙 수정", fld("내용", `<textarea name="c" required>${esc(n.content)}</textarea>`), async (f) => {
+  modal("규칙 수정 — 전달 " + (n.no ?? ""), fld("내용", `<textarea name="c" required>${esc(n.content)}</textarea>`), async (f) => {
     try { await q(sb.from("notes").update({ content: f.get("c") }).eq("id", id)); toast("수정 완료"); route(); }
     catch (_) { return false; }
   });
