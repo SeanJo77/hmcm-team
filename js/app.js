@@ -128,6 +128,38 @@ async function notify(recipient, message, link, type) {
   try { await sb.from("notifications").insert({ recipient, actor: me().name, type: type || null, message, link: link || null }); } catch (_) {}
 }
 
+/* ── 실시간 접속자 (Realtime Presence) ─────────── */
+let _presenceCh = null;
+function initPresence() {
+  const el = $("#presence");
+  if (!session || !me()) {
+    if (_presenceCh) { try { sb.removeChannel(_presenceCh); } catch (_) {} _presenceCh = null; }
+    if (el) { el.classList.add("hidden"); el.innerHTML = ""; }
+    return;
+  }
+  if (_presenceCh) return;                       // 이미 접속 채널 유지 중
+  const u = me();
+  _presenceCh = sb.channel("online-users", { config: { presence: { key: u.empno } } });
+  _presenceCh.on("presence", { event: "sync" }, renderPresence);
+  _presenceCh.subscribe(async (st) => { if (st === "SUBSCRIBED") { try { await _presenceCh.track({ name: u.name, empno: u.empno }); } catch (_) {} } });
+}
+function renderPresence() {
+  const el = $("#presence"); if (!el) return;
+  if (!_presenceCh || !session) { el.classList.add("hidden"); el.innerHTML = ""; return; }
+  const state = _presenceCh.presenceState();
+  const seen = {}, users = [];
+  for (const k in state) { const m = (state[k] || [])[0]; if (m && m.name && !seen[m.name]) { seen[m.name] = 1; users.push(m); } }
+  users.sort((a, b) => CONFIG.TEAM.indexOf(a.name) - CONFIG.TEAM.indexOf(b.name));
+  if (!users.length) { el.classList.add("hidden"); el.innerHTML = ""; return; }
+  const myName = me() && me().name;
+  el.classList.remove("hidden");
+  el.innerHTML = `<div class="presence-row">${users.map(m => {
+    const gn = (m.name || "").length > 1 ? m.name.slice(1) : (m.name || "");
+    const self = m.name === myName;
+    return `<span class="presence-dot ${self ? "self" : ""}" title="접속 중: ${esc(m.name)}${self ? " (나)" : ""}">${esc(gn)}</span>`;
+  }).join("")}</div>`;
+}
+
 /* 범용 모달 */
 function modal(title, bodyHtml, onSubmit, submitLabel = "저장") {
   const wrap = document.createElement("div");
@@ -212,6 +244,7 @@ function renderAuth() {
       `<br><a href="javascript:changePw()" style="color:#93c5fd;font-size:11px">비밀번호 변경</a>`;
   }
   loadNotifs();
+  initPresence();
 }
 
 /* ── router ───────────────────────────────────── */
