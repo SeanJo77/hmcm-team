@@ -520,16 +520,32 @@ window.issueDel = async function (id) {
 };
 window.issueGo = async function (id, cur) {
   if (!canWrite()) return needLogin();
-  let next = "GO";
-  if (cur) {
-    const n = cur === "GO" ? 2 : (parseInt(cur.split("*")[1]) || 1) + 1;
-    next = "GO*" + n;
-    if (!confirm(`재질의 ${next} 를 제출할까요?`)) return;
-  } else if (!confirm("GO 제출 시 안건/질의/본인생각이 잠깁니다. 제출할까요?")) return;
-  try {
-    await q(sb.from("wbs_issues").update({ request_go: next, status: "진행중" }).eq("id", id));
-    toast(next + " 제출 완료"); vIssueDetail(id);
-  } catch (_) {}
+  if (!cur) {
+    // 최초 GO 제출
+    if (!confirm("GO 제출 시 안건/질의/본인생각이 잠깁니다. 제출할까요?")) return;
+    try {
+      await q(sb.from("wbs_issues").update({ request_go: "GO", status: "진행중" }).eq("id", id));
+      toast("GO 제출 완료 — Slack 알림 발송"); vIssueDetail(id);
+    } catch (_) {}
+    return;
+  }
+  // 재질의: 회차별 추가 질의/의견을 입력해야 제출 가능
+  const n = cur === "GO" ? 2 : (parseInt(cur.split("*")[1]) || 1) + 1;
+  const next = "GO*" + n;
+  const x = _issueCache && _issueCache.id === id ? _issueCache : null;
+  if (!x) return;
+  modal(`재질의 ${next} — 추가 내용 입력`, [
+    `<div class="field-hint" style="margin-bottom:10px">재질의는 추가 질의와 본인 생각을 입력해야 제출됩니다. 기존 내용 아래에 회차 구분선과 함께 추가됩니다.</div>`,
+    fld(`추가 질의 내용 (${next}) <span class='req'>*</span>`, `<textarea name="q" required placeholder="1. 추가 질의&#10;2. 추가 질의"></textarea>`),
+    fld(`추가 본인 생각 (${next}) <span class='req'>*</span>`, `<textarea name="o" required placeholder="1. 의견 (추가 질의 1에 대한)"></textarea>`),
+  ].join(""), async (f) => {
+    const q2 = (x.question || "") + `\n\n━━ ${next} 추가 질의 (${today()}) ━━\n` + f.get("q").trim();
+    const o2 = (x.opinion || "") + `\n\n━━ ${next} 추가 의견 (${today()}) ━━\n` + f.get("o").trim();
+    try {
+      await q(sb.from("wbs_issues").update({ question: q2, opinion: o2, request_go: next, status: "진행중" }).eq("id", id));
+      toast(next + " 제출 완료 — Slack 알림 발송"); vIssueDetail(id);
+    } catch (_) { return false; }
+  }, next + " 제출");
 };
 window.issueFeedback = function (id) {
   if (!canWrite()) return needLogin();
