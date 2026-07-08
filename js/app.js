@@ -25,8 +25,22 @@ const canWrite = () => !!session;
 function me() {
   if (!session) return null;
   const m = session.user.user_metadata || {};
-  return { empno: m.empno, name: m.name || m.empno, role: m.role || "normal" };
+  const empno = m.empno || (session.user.email || "").split("@")[0];
+  const u = CONFIG.USERS[empno] || {};
+  return { empno, name: m.name || u.name || empno, role: m.role || u.role || "normal" };
 }
+window.changePw = function () {
+  if (!canWrite()) return needLogin();
+  modal("비밀번호 변경", [
+    fld("새 비밀번호 (6자 이상) <span class='req'>*</span>", `<input type="password" name="p1" required minlength="6" style="width:100%" autocomplete="new-password">`),
+    fld("새 비밀번호 확인 <span class='req'>*</span>", `<input type="password" name="p2" required style="width:100%" autocomplete="new-password">`),
+  ].join(""), async (f) => {
+    if (f.get("p1") !== f.get("p2")) { toast("비밀번호가 일치하지 않습니다.", true); return false; }
+    const { error } = await sb.auth.updateUser({ password: f.get("p1") });
+    if (error) { toast("변경 실패: " + error.message, true); return false; }
+    toast("비밀번호가 변경되었습니다. 다음 로그인부터 적용됩니다.");
+  }, "변경");
+};
 const isMaster = () => me()?.role === "master";
 
 /* 범용 모달 */
@@ -108,7 +122,8 @@ function renderAuth() {
   if (session) {
     const u = me();
     $("#auth-email").innerHTML = esc(u.name) + (u.role === "master" ? ' <span class="badge b-go">팀장</span>' : "") +
-      `<br><small class="muted">${esc(u.empno)} · CM기획팀</small>`;
+      `<br><small class="muted">${esc(u.empno)} · CM기획팀</small>` +
+      `<br><a href="javascript:changePw()" style="color:#93c5fd;font-size:11px">비밀번호 변경</a>`;
   }
 }
 
