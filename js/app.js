@@ -926,9 +926,36 @@ async function vDocs() {
   app.innerHTML = `
   <div class="row" style="margin-bottom:10px">
     <h1 style="margin:0">HMCM Mock-up</h1>
+    <span class="muted" id="mockup-status">${me() ? me().empno + " 자동 로그인 중…" : "로그인하지 않아 수동/게스트 접속"}</span>
     <a class="btn sm ghost" style="text-decoration:none;margin-left:auto" href="https://seanjo77.github.io/hmcmsite/" target="_blank" rel="noopener">새 창에서 열기 ↗</a>
   </div>
-  <iframe src="https://seanjo77.github.io/hmcmsite/" class="mockup-frame"></iframe>`;
+  <iframe id="mockup-if" src="https://seanjo77.github.io/hmcmsite/" class="mockup-frame"></iframe>`;
+  // 본 사이트 로그인 사번으로 Mock-up 자동 로그인 (동일 도메인 → iframe 제어 가능)
+  const emp = me()?.empno;
+  const ifr = $("#mockup-if");
+  if (emp && ifr) ifr.addEventListener("load", () => {
+    let tries = 0;
+    const timer = setInterval(() => {
+      tries++;
+      try {
+        const w = ifr.contentWindow, doc = ifr.contentDocument;
+        const inp = doc && doc.querySelector('input[placeholder="Enter your ID"]');
+        if (inp) {
+          const set = Object.getOwnPropertyDescriptor(w.HTMLInputElement.prototype, "value").set;
+          set.call(inp, emp);
+          inp.dispatchEvent(new w.Event("input", { bubbles: true }));
+          setTimeout(() => {
+            if (inp.form) (inp.form.requestSubmit ? inp.form.requestSubmit() : inp.form.submit());
+            const st = $("#mockup-status"); if (st) st.textContent = emp + " 자동 로그인 완료";
+          }, 200);
+          clearInterval(timer);
+        } else if (tries > 40) {
+          clearInterval(timer);
+          const st = $("#mockup-status"); if (st) st.textContent = "";
+        }
+      } catch (_) { clearInterval(timer); }
+    }, 250);
+  });
   return;
   // eslint-disable-next-line no-unreachable
   const { data: files, error } = await sb.storage.from("files").list("docs", { limit: 200, sortBy: { column: "created_at", order: "desc" } });
