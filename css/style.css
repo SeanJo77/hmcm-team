@@ -169,6 +169,10 @@ summary::-webkit-details-marker { display: none; }
 .modal h2 { font-size: 16px; }
 .modal .row .field { flex: 1; min-width: 120px; }
 
+/* v4: Mock-up 전체 화면 프레임 */
+.mockup-frame { width: 100%; height: calc(100vh - 120px); border: 1px solid var(--line);
+  border-radius: 10px; background: #fff; display: block; }
+
 /* v3: 주간 셀 편집 */
 .week-cell.editable { cursor: pointer; position: relative; }
 .week-cell.editable:hover { background: var(--accent-soft); border-color: #bfdbfe; }

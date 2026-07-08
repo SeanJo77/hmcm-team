@@ -891,6 +891,15 @@ window.refAddLink = function () {
 
 /* ══ 자료실 ══ */
 async function vDocs() {
+  /* HMCM Mock-up 사이트를 우측 창에 그대로 표시 (업로드·문서관리 미사용) */
+  app.innerHTML = `
+  <div class="row" style="margin-bottom:10px">
+    <h1 style="margin:0">HMCM Mock-up</h1>
+    <a class="btn sm ghost" style="text-decoration:none;margin-left:auto" href="https://seanjo77.github.io/hmcmsite/" target="_blank" rel="noopener">새 창에서 열기 ↗</a>
+  </div>
+  <iframe src="https://seanjo77.github.io/hmcmsite/" class="mockup-frame"></iframe>`;
+  return;
+  // eslint-disable-next-line no-unreachable
   const { data: files, error } = await sb.storage.from("files").list("docs", { limit: 200, sortBy: { column: "created_at", order: "desc" } });
   if (error) { app.innerHTML = `<div class="panel">자료실 로드 실패: ${esc(error.message)}</div>`; return; }
   const list = (files || []).filter(f => f.name !== ".emptyFolderPlaceholder");
