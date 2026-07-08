@@ -81,11 +81,17 @@ function renderNotifBell() {
   el.innerHTML = `<button type="button" class="notif-btn ${unread ? "has-unread" : ""}" onclick="openNotifModal()">🔔 알림${unread ? ` <span class="notif-badge">${unread}</span>` : ""}</button>`;
 }
 window.openNotifModal = function () {
-  const body = _notifs.length ? _notifs.map(n => `<div class="notif-item ${n.is_read ? "" : "unread"}" ${n.link ? `onclick="notifOpen(${n.id}, '${esc(n.link)}')"` : `onclick="notifOpen(${n.id}, '')"`}>
+  const unread = _notifs.filter(n => !n.is_read);
+  const read = _notifs.filter(n => n.is_read).slice(0, 5);   // 확인한 알림은 최근 5건 유지
+  const item = (n) => `<div class="notif-item ${n.is_read ? "" : "unread"}" onclick="notifOpen(${n.id}, '${esc(n.link || "")}')">
       <div class="notif-msg">${esc(n.message)}</div>
-      <div class="notif-time">${String(n.created_at).slice(0, 16).replace("T", " ")}${n.is_read ? "" : ' <span class="badge b-warn">NEW</span>'}</div>
-    </div>`).join("") : '<p class="muted">알림이 없습니다.</p>';
-  const foot = _notifs.some(n => !n.is_read) ? `<div class="row" style="margin-top:12px;margin-bottom:0"><button class="btn sm ghost" onclick="notifReadAll()">모두 읽음</button></div>` : "";
+      <div class="notif-time">${kstDateTime(n.created_at)}${n.is_read ? "" : ' <span class="badge b-warn">NEW</span>'}</div>
+    </div>`;
+  let body = `<div class="notif-sec"><div class="notif-sec-h">🔴 신규 알림${unread.length ? ` (${unread.length})` : ""}</div>`
+    + (unread.length ? unread.map(item).join("") : '<p class="muted" style="margin:2px 0 0">새 알림이 없습니다.</p>')
+    + `</div>`;
+  if (read.length) body += `<div class="notif-sec"><div class="notif-sec-h">확인한 알림 <small class="muted">(최근 ${read.length})</small></div>` + read.map(item).join("") + `</div>`;
+  const foot = unread.length ? `<div class="row" style="margin-top:8px;margin-bottom:0"><button class="btn sm ghost" onclick="notifReadAll()">모두 읽음</button></div>` : "";
   modal("🔔 알림", body + foot, null);
 };
 window.notifOpen = async function (id, link) {
