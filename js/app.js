@@ -50,6 +50,21 @@ const hhmm = (ts) => {
 };
 /* 일일 기록에서 시차·연차(휴가) 로그 판별 — 업무시간 합계에서 제외 */
 const isLeaveLog = (r) => { const s = (r.subcode || "").replace(/\s/g, ""); return s.includes("시차") || s.includes("연차"); };
+/* 월요일 시작 주차 라벨 — 목요일이 속한 달을 기준으로 'N월 M주차 (월~금)' */
+function weekOfMonthLabel(dateStr) {
+  const [Y, M, D] = String(dateStr).split("-").map(Number);
+  const d = new Date(Y, M - 1, D);
+  const dow = (d.getDay() + 6) % 7;                 // Mon=0 … Sun=6
+  const mon = new Date(d); mon.setDate(d.getDate() - dow);
+  const thu = new Date(mon); thu.setDate(mon.getDate() + 3);   // 소속 월 판정 기준
+  const first = new Date(thu.getFullYear(), thu.getMonth(), 1);
+  const firstThu = 1 + ((3 - ((first.getDay() + 6) % 7) + 7) % 7);
+  const wk = Math.floor((thu.getDate() - firstThu) / 7) + 1;
+  const fri = new Date(mon); fri.setDate(mon.getDate() + 4);
+  const p = (n) => String(n).padStart(2, "0");
+  const fmt = (t) => `${t.getFullYear()}-${p(t.getMonth() + 1)}-${p(t.getDate())}`;
+  return `${thu.getMonth() + 1}월 ${wk}주차 (${fmt(mon)}~${fmt(fri)})`;
+}
 /* KST 날짜+시간 "YYYY-MM-DD HH:MM" */
 const kstDateTime = (ts) => {
   if (!ts) return "";
@@ -1013,10 +1028,7 @@ async function vDaily() {
     for (const c of cc) (_dailyCmts[c.card_key] = _dailyCmts[c.card_key] || []).push(c);
   } catch (_) {}
   for (const r of rows) {
-    if (!r.week_label && r.log_date) {
-      const d = new Date(r.log_date);
-      r.week_label = (d.getMonth() + 1) + "월 " + Math.ceil(d.getDate() / 7) + "주차 (" + r.log_date.slice(0, 7) + ")";
-    }
+    if (r.log_date) r.week_label = weekOfMonthLabel(r.log_date);   // 저장값 무시하고 월요일 기준으로 통일
   }
   const ORD = (m) => { const i = CONFIG.TEAM.indexOf(m); return i < 0 ? 99 : i; };
   const state = { member: "", month: "" };
@@ -1106,8 +1118,7 @@ window.dailyAdd = function () {
     fld("업무 내용 <span class='req'>*</span>", `<textarea name="c" required placeholder="[시간] 업무 내용"></textarea>`),
   ].join(""), async (f) => {
     const dt = f.get("d");
-    const dd = new Date(dt);
-    const wk = (dd.getMonth() + 1) + "월 " + Math.ceil(dd.getDate() / 7) + "주차 (" + dt.slice(0, 7) + ")";
+    const wk = weekOfMonthLabel(dt);
     try {
       await q(sb.from("daily_logs").insert({
         log_date: dt, week_label: wk, member: f.get("m"),
