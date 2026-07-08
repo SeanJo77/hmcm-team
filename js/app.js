@@ -48,6 +48,13 @@ const hhmm = (ts) => {
   if (isNaN(d)) return String(ts).slice(11, 16);
   return d.toLocaleTimeString("ko-KR", { timeZone: "Asia/Seoul", hour: "2-digit", minute: "2-digit", hour12: false });
 };
+/* KST 날짜+시간 "YYYY-MM-DD HH:MM" */
+const kstDateTime = (ts) => {
+  if (!ts) return "";
+  const d = new Date(ts);
+  if (isNaN(d)) return String(ts).slice(0, 16).replace("T", " ");
+  return d.toLocaleDateString("sv-SE", { timeZone: "Asia/Seoul" }) + " " + hhmm(ts);
+};
 /* 수정·삭제 권한: 해당 건의 담당자(owner) 또는 팀장(master)만 */
 const canEditOwn = (owner) => !!session && (isMaster() || (!!me() && me().name === owner));
 function guardEdit(owner) {
@@ -252,7 +259,7 @@ async function vDashboard() {
 
   <div class="panel notice-panel"><h2>📢 공지</h2>
     ${notices.length ? notices.map(n => `<div class="notice-item">
-      <div class="meta">${esc(n.author)} · ${String(n.created_at).slice(0, 10)}
+      <div class="meta">${esc(n.author)} · ${kstDateTime(n.created_at)}
         ${isMaster() ? `<button class="btn sm ghost" onclick="noticeDel(${n.id})">삭제</button>` : ""}</div>
       <div class="body">${esc(n.content)}</div></div>`).join("") : '<p class="muted">등록된 공지가 없습니다.</p>'}
     ${isMaster() ? `<form id="notice-form" class="row" style="margin-top:10px;margin-bottom:0">
@@ -1385,7 +1392,7 @@ async function vSuggest() {
     </form></div>
   <div class="panel"><h2>건의 목록 (${rows.length})</h2>
     ${rows.map(sg => `<div class="comment">
-      <div class="meta"><b>${esc(sg.author)}</b> · ${String(sg.created_at).slice(0, 16).replace("T", " ")}
+      <div class="meta"><b>${esc(sg.author)}</b> · ${kstDateTime(sg.created_at)}
         ${(sg.author === me().name || isMaster()) ? `<button class="btn sm ghost" onclick="suggDel(${sg.id}, '${esc(sg.author)}')">삭제</button>` : ""}</div>
       <div class="body">${esc(sg.content)}</div></div>`).join("") || '<p class="muted">아직 건의사항이 없습니다.</p>'}
   </div>`;
