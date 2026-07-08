@@ -331,6 +331,7 @@ async function vTasks() {
     if (state.status === "done") rows = rows.filter(x => (x.progress ?? 0) >= 1);
     if (state.status === "open") rows = rows.filter(x => (x.progress ?? 0) < 1);
     if (state.status === "late") rows = rows.filter(x => (x.progress ?? 0) < 1 && x.end_plan && x.end_plan < today());
+    if (state.status === "holding") rows = rows.filter(x => x.holding);
     return rows;
   }
 
@@ -393,11 +394,11 @@ async function vTasks() {
         <table><thead><tr><th style="min-width:220px">상세 업무</th><th>담당</th><th>시급성</th><th>Start</th><th>End(plan)</th><th>End(real)</th><th style="min-width:130px">진행률</th>
         <th style="min-width:340px"><div style="position:relative">${scaleHeader}</div></th>${canWrite() ? "<th></th>" : ""}</tr></thead><tbody>
         ${grp.items.map(x => `<tr>
-          <td class="wrap">${x.holding ? `<span class="badge b-hold">⏸ Holding</span> ` : ""}${x.lv5_work && x.lv6_content ? `<small class="muted">${esc(x.lv5_work)}</small><br>` : ""}${esc(x.lv6_content || x.lv5_work || "")}${x.remark ? `<div class="task-lc">📝 <b>팀장 코멘트</b> · ${esc(x.remark)}</div>` : ""}</td>
+          <td class="wrap">${x.lv5_work && x.lv6_content ? `<small class="muted">${esc(x.lv5_work)}</small><br>` : ""}${esc(x.lv6_content || x.lv5_work || "")}${x.remark ? `<div class="task-lc">📝 <b>팀장 코멘트</b> · ${esc(x.remark)}</div>` : ""}</td>
           <td>${esc(x.assignee || "")}</td>
           <td><span class="badge ${x.urgency === "S" ? "b-late" : x.urgency === "A" ? "b-warn" : "b-gray"}">${esc(x.urgency || "-")}</span></td>
           <td>${fmtD(x.start_date)}</td><td>${fmtD(x.end_plan)}</td>
-          <td>${x.end_real ? fmtD(x.end_real) + (x.end_plan && x.end_real > x.end_plan ? ' <span class="badge b-late">지연</span>' : x.end_plan && x.end_real < x.end_plan ? ' <span class="badge b-done">조기</span>' : "") : '<span class="muted">-</span>'}</td>
+          <td>${x.holding ? '<span class="badge b-hold">⏸ Holding</span>' : (x.end_real ? fmtD(x.end_real) + (x.end_plan && x.end_real > x.end_plan ? ' <span class="badge b-late">지연</span>' : x.end_plan && x.end_real < x.end_plan ? ' <span class="badge b-done">조기</span>' : "") : '<span class="muted">-</span>')}</td>
           <td>${progBar(x.progress)}</td>
           <td>${gantt(x)}</td>
           ${canWrite() ? `<td style="white-space:nowrap">${canEditOwn(x.assignee) ? `<button class="btn sm ghost" onclick="taskEdit(${x.id})">수정</button>
@@ -414,7 +415,7 @@ async function vTasks() {
   <div class="row">
     ${sel("assignee", CONFIG.TEAM, "", "담당자 전체")}
     <select id="f-status"><option value="">상태 전체</option><option value="open">진행중</option>
-      <option value="late">기한 경과</option><option value="done">완료</option></select>
+      <option value="late">기한 경과</option><option value="holding">Holding</option><option value="done">완료</option></select>
     <button class="btn sm ghost" id="btn-fold">모두 접기</button>
     <button class="btn sm ghost" id="btn-unfold">모두 펼치기</button>
     <span class="muted" id="task-count"></span>
