@@ -224,6 +224,10 @@ summary::-webkit-details-marker { display: none; }
 .notif-item.unread { border-left: 3px solid var(--warn); background: #FCF6F1; }
 .notif-item .notif-msg { font-size: 13px; line-height: 1.5; }
 .notif-item .notif-time { font-size: 11px; color: var(--sub); margin-top: 4px; }
+.notif-sec { margin-bottom: 14px; }
+.notif-sec:last-child { margin-bottom: 0; }
+.notif-sec-h { font-size: 12px; font-weight: 700; color: var(--sub); margin: 2px 0 8px; padding-bottom: 5px; border-bottom: 1px solid var(--line); }
+.notif-sec .notif-item.unread { background: #FCF6F1; }
 
 /* v6: 이슈 목록 댓글 표식 */
 .cmt-badge { display: inline-block; background: var(--accent-soft); color: var(--accent); border-radius: 10px;
