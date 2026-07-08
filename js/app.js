@@ -42,7 +42,12 @@ window.changePw = function () {
   }, "변경");
 };
 const isMaster = () => me()?.role === "master";
-const hhmm = (ts) => ts ? String(ts).slice(11, 16) : "";
+const hhmm = (ts) => {
+  if (!ts) return "";
+  const d = new Date(ts);
+  if (isNaN(d)) return String(ts).slice(11, 16);
+  return d.toLocaleTimeString("ko-KR", { timeZone: "Asia/Seoul", hour: "2-digit", minute: "2-digit", hour12: false });
+};
 /* 수정·삭제 권한: 해당 건의 담당자(owner) 또는 팀장(master)만 */
 const canEditOwn = (owner) => !!session && (isMaster() || (!!me() && me().name === owner));
 function guardEdit(owner) {
@@ -264,7 +269,7 @@ async function vDashboard() {
 
   <div class="panel"><h2>미해결 이슈 (${openIssues.length})</h2>${openIssues.length ? `
     <div class="tbl-wrap" style="max-height:none"><table><thead><tr><th>일자</th><th>담당</th><th>안건</th><th>요청</th><th>상태</th></tr></thead><tbody>
-    ${openIssues.map(x => `<tr><td>${fmtD(x.issue_date)}${x.created_at ? `<br><small class="muted">${hhmm(x.created_at)}</small>` : ""}</td><td>${esc(x.assignee)}</td>
+    ${openIssues.map(x => `<tr><td style="white-space:nowrap">${fmtD(x.issue_date)}${x.created_at ? ` <small class="muted">${hhmm(x.created_at)}</small>` : ""}</td><td>${esc(x.assignee)}</td>
       <td class="wrap"><a class="link" href="#/issues/${x.id}">${esc((x.agenda || x.question || "").slice(0, 90)) || "(무제)"}</a>${cmtCount[x.id] ? ` <span class="cmt-badge" title="댓글 ${cmtCount[x.id]}개">💬 ${cmtCount[x.id]}</span>` : ""}</td>
       <td>${goBadge(x.request_go)}</td><td>${issueStatusBadge(x)}</td></tr>`).join("")}
     </tbody></table></div>` : '<p class="muted">모든 이슈가 완료되었습니다.</p>'}
@@ -620,7 +625,7 @@ async function vIssues() {
       rows = rows.filter(x => ((x.agenda || "") + " " + (x.question || "") + " " + (x.opinion || "") + " " + (x.feedback || "")).toLowerCase().includes(k));
     }
     $("#issue-body").innerHTML = rows.map(x => `<tr>
-      <td>${fmtD(x.issue_date)}${x.created_at ? `<br><small class="muted">${hhmm(x.created_at)}</small>` : ""}</td><td>${esc(x.assignee)}</td>
+      <td style="white-space:nowrap">${fmtD(x.issue_date)}${x.created_at ? ` <small class="muted">${hhmm(x.created_at)}</small>` : ""}</td><td>${esc(x.assignee)}</td>
       <td class="wrap"><a class="link" href="#/issues/${x.id}">${esc((x.agenda || x.question || "").slice(0, 90)) || "(무제)"}</a>${cmtCount[x.id] ? ` <span class="cmt-badge" title="댓글 ${cmtCount[x.id]}개">💬 ${cmtCount[x.id]}</span>` : ""}</td>
       <td>${goBadge(x.request_go)}</td><td>${issueStatusBadge(x)}</td></tr>`).join("");
     $("#issue-count").textContent = rows.length + "건 (미해결 " + rows.filter(x => !issueClosed(x)).length + ")";
