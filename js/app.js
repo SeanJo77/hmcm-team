@@ -48,6 +48,8 @@ const hhmm = (ts) => {
   if (isNaN(d)) return String(ts).slice(11, 16);
   return d.toLocaleTimeString("ko-KR", { timeZone: "Asia/Seoul", hour: "2-digit", minute: "2-digit", hour12: false });
 };
+/* 일일 기록에서 시차·연차(휴가) 로그 판별 — 업무시간 합계에서 제외 */
+const isLeaveLog = (r) => { const s = (r.subcode || "").replace(/\s/g, ""); return s.includes("시차") || s.includes("연차"); };
 /* KST 날짜+시간 "YYYY-MM-DD HH:MM" */
 const kstDateTime = (ts) => {
   if (!ts) return "";
@@ -1025,7 +1027,7 @@ async function vDaily() {
     if (state.member) f = f.filter(r => r.member === state.member);
     if (state.month) f = f.filter(r => (r.log_date || "").startsWith(state.month));
     const byMember = {};
-    for (const r of f) byMember[r.member] = (byMember[r.member] || 0) + (r.hours || 0);
+    for (const r of f) { if (isLeaveLog(r)) continue; byMember[r.member] = (byMember[r.member] || 0) + (r.hours || 0); }
     $("#daily-cards").innerHTML = Object.entries(byMember).sort((a, b) => ORD(a[0]) - ORD(b[0])).map(([m, h]) =>
       `<div class="card"><div class="num">${Math.round(h * 10) / 10}<small style="font-size:13px">h</small></div><div class="lbl">${esc(m)}</div></div>`).join("");
     const weekOrder = []; const wMap = {};
@@ -1075,7 +1077,7 @@ async function vDaily() {
 
   app.innerHTML = `
   <h1>일일 기록</h1>
-  <p class="page-sub">회사 ERP 데이터 조회 전용 — 주차·일자 접기, 팀원별 최다 시간 업무 우선 표시</p>
+  <p class="page-sub">회사 ERP 데이터 조회 전용 — 주차·일자 접기, 팀원별 최다 시간 업무 우선 표시 · 상단 업무시간 합계는 시차·연차 제외</p>
   <div class="row">
     ${sel("d-member", CONFIG.TEAM, "", "팀원 전체")}
     ${sel("d-month", months, "", "월 전체")}
