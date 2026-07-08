@@ -239,3 +239,23 @@ summary::-webkit-details-marker { display: none; }
 .daily-cmts { margin-top: 7px; padding-top: 7px; border-top: 1px dashed var(--line); display: flex; flex-direction: column; gap: 5px; }
 .daily-cmts .cardcmt { background: #FBF7EF; }
 .cardcmt-add { align-self: flex-start; }
+
+/* v7: 상단 우측 브랜드 */
+#topbrand { position: fixed; top: 12px; right: 22px; z-index: 40; font-size: 13px; letter-spacing: .6px;
+  color: var(--accent); font-weight: 800; opacity: .5; pointer-events: none; }
+#topbrand b { color: var(--warn); font-weight: 800; }
+
+/* v7: 사이드바 타이포 가독성 개선 */
+.brand span { color: #C7BEAC; }
+#auth-email { color: #F0ECE3; font-weight: 600; }
+#auth-box .muted, #auth-email .muted { color: #BBB2A3 !important; }
+#auth-box a { color: #A8DACF !important; }
+#auth-user #btn-logout { background: #4A4436; color: #F1EDE4; border-color: #625A49; }
+#auth-user #btn-logout:hover { background: #57503F; color: #fff; }
+.hint { color: #A79E8C; }
+
+/* v7: 과업 목록 표식 (Holding / 팀장 코멘트) */
+.badge.b-hold { background: #F6D3C2; color: #9A3E14; }
+.task-lc { display: inline-block; margin-top: 4px; font-size: 11.5px; color: var(--accent); background: var(--accent-soft);
+  border-radius: 6px; padding: 2px 7px; }
+.task-lc b { color: var(--accent); }
