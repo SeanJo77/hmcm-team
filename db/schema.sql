@@ -243,3 +243,41 @@ create policy "files_read" on storage.objects for select using (bucket_id = 'fil
 create policy "files_insert" on storage.objects for insert to authenticated with check (bucket_id = 'files');
 create policy "files_update" on storage.objects for update to authenticated using (bucket_id = 'files');
 create policy "files_delete" on storage.objects for delete to authenticated using (bucket_id = 'files');
+
+-- ── v6 개편: 인앱 알림 (in-app notifications) ──────
+-- 멘션 댓글·팀장 카드 코멘트 시 대상자에게 알림 생성. 읽기는 전체, 쓰기는 로그인 사용자.
+-- (앱은 recipient = 로그인 사용자 이름으로 필터링하여 표시)
+create table if not exists notifications (
+  id bigint generated always as identity primary key,
+  recipient text not null,           -- 알림 대상자 이름 (CONFIG.TEAM)
+  actor text,                        -- 알림을 발생시킨 사람
+  type text,                         -- mention / weekly_comment / daily_comment 등
+  message text not null,             -- 표시 문구
+  link text,                         -- 클릭 시 이동할 해시 경로 (예: #/issues/123)
+  is_read boolean default false,
+  created_at timestamptz default now()
+);
+create index if not exists idx_notif_recipient on notifications (recipient, is_read);
+alter table notifications enable row level security;
+create policy "notif_read"   on notifications for select using (true);
+create policy "notif_insert" on notifications for insert to authenticated with check (true);
+create policy "notif_update" on notifications for update to authenticated using (true);
+create policy "notif_delete" on notifications for delete to authenticated using (true);
+
+-- ── v6 개편: 카드 코멘트 (주간/일일 팀장 코멘트) ──
+-- 주간 업무 요약(주차×팀원)·일일 기록(일자×팀원) 카드에 팀장이 남기는 코멘트.
+-- 열람은 전체, 작성·삭제는 앱에서 팀장(master)만 허용(RLS는 로그인 사용자 허용).
+create table if not exists card_comments (
+  id bigint generated always as identity primary key,
+  scope text not null,               -- 'weekly' | 'daily'
+  card_key text not null,            -- weekly: '<week_label>|<member>' , daily: '<log_date>|<member>'
+  author text not null,
+  content text not null,
+  created_at timestamptz default now()
+);
+create index if not exists idx_cardcmt on card_comments (scope, card_key);
+alter table card_comments enable row level security;
+create policy "cardcmt_read"   on card_comments for select using (true);
+create policy "cardcmt_insert" on card_comments for insert to authenticated with check (true);
+create policy "cardcmt_update" on card_comments for update to authenticated using (true);
+create policy "cardcmt_delete" on card_comments for delete to authenticated using (true);
