@@ -199,4 +199,43 @@ summary::-webkit-details-marker { display: none; }
 .doc-body h1, .doc-body h2, .doc-body h3 { margin: 14px 0 8px; }
 .doc-body p { margin: 8px 0; }
 .doc-body pre { background: #F5F3EC; padding: 12px; border-radius: 8px; overflow: auto; }
-.doc-body code { background: #EFECE4; pa
+.doc-body code { background: #EFECE4; padding: 1px 5px; border-radius: 4px; font-size: 12.5px; }
+.doc-body table { margin: 10px 0; }
+.doc-body img { max-width: 100%; }
+.doc-body ul, .doc-body ol { padding-left: 22px; }
+
+@media (max-width: 860px) {
+  body { flex-direction: column; }
+  #sidebar { width: 100%; height: auto; position: static; }
+  #app { padding: 16px; }
+  .issue-grid { grid-template-columns: 1fr; }
+}
+
+/* v6: 알림 (in-app notifications) */
+#notif-bell { margin-bottom: 10px; }
+.notif-btn { width: 100%; text-align: left; background: #39342B; color: #EDE9E0; border: 1px solid #4A4436;
+  border-radius: 7px; padding: 8px 10px; font-size: 12.5px; cursor: pointer; display: flex; align-items: center; gap: 6px; }
+.notif-btn:hover { background: #423C31; }
+.notif-btn.has-unread { border-color: var(--warn); color: #fff; }
+.notif-badge { background: var(--warn); color: #fff; border-radius: 10px; font-size: 11px; font-weight: 700;
+  padding: 0 6px; min-width: 18px; text-align: center; margin-left: auto; }
+.notif-item { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; cursor: pointer; }
+.notif-item:hover { background: var(--accent-soft); border-color: #B7CEC7; }
+.notif-item.unread { border-left: 3px solid var(--warn); background: #FCF6F1; }
+.notif-item .notif-msg { font-size: 13px; line-height: 1.5; }
+.notif-item .notif-time { font-size: 11px; color: var(--sub); margin-top: 4px; }
+
+/* v6: 이슈 목록 댓글 표식 */
+.cmt-badge { display: inline-block; background: var(--accent-soft); color: var(--accent); border-radius: 10px;
+  font-size: 11px; font-weight: 600; padding: 1px 7px; margin-left: 4px; white-space: nowrap; }
+
+/* v6: 주간/일일 팀장 카드 코멘트 */
+.week-cell.wk-cmt { display: flex; flex-direction: column; gap: 5px; background: #FBF7EF; }
+.cardcmt { display: flex; align-items: flex-start; gap: 5px; background: #fff; border: 1px solid var(--line);
+  border-radius: 6px; padding: 5px 7px; font-size: 12px; line-height: 1.5; }
+.cardcmt-b { flex: 1; white-space: pre-wrap; word-break: break-word; }
+.cardcmt-x { border: none; background: none; color: var(--sub); cursor: pointer; font-size: 12px; padding: 0 2px; line-height: 1; }
+.cardcmt-x:hover { color: var(--danger); }
+.daily-cmts { margin-top: 7px; padding-top: 7px; border-top: 1px dashed var(--line); display: flex; flex-direction: column; gap: 5px; }
+.daily-cmts .cardcmt { background: #FBF7EF; }
+.cardcmt-add { align-self: flex-start; }
