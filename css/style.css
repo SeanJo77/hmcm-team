@@ -219,6 +219,33 @@ summary::-webkit-details-marker { display: none; }
   letter-spacing: -.5px; flex-shrink: 0; border: 1.5px solid #3f544e; }
 .presence-dot.self { background: var(--warn); border-color: #e0916a; }
 
+/* v9: 대시보드 주 달력 (weekly calendar) */
+.cal-grid { display: grid; grid-template-columns: 44px repeat(7, 1fr); gap: 4px; }
+.cal-hcell { text-align: center; font-size: 11px; font-weight: 700; color: var(--sub); padding: 2px 0; }
+.cal-hcell.cal-sat { color: #2563eb; } .cal-hcell.cal-sun { color: var(--danger); }
+.cal-wlabel { display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: var(--sub); }
+.cal-cell { min-height: 66px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); padding: 3px 4px; overflow: hidden; }
+.cal-cell.cal-edit { cursor: pointer; }
+.cal-cell.cal-edit:hover { background: var(--accent-soft); border-color: #B7CEC7; }
+.cal-cell.cal-today { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.cal-dnum { font-size: 11px; font-weight: 700; margin-bottom: 2px; color: var(--sub); }
+.cal-cell.cal-sat .cal-dnum { color: #2563eb; } .cal-cell.cal-sun .cal-dnum { color: var(--danger); }
+.cal-cell.cal-today .cal-dnum { color: var(--accent); }
+.cal-ev { display: flex; align-items: center; gap: 3px; font-size: 10.5px; line-height: 1.35; border-radius: 4px;
+  padding: 1px 4px; margin-bottom: 2px; color: #fff; }
+.cal-ev-t { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cal-ev-x { cursor: pointer; opacity: .75; font-weight: 700; flex-shrink: 0; }
+.cal-ev-x:hover { opacity: 1; }
+.cal-ev.c-blue { background: #2563eb; } .cal-ev.c-red { background: #D05C26; }
+.cal-ev.c-green { background: #1F524B; } .cal-ev.c-amber { background: #C77A1F; } .cal-ev.c-gray { background: #6E675C; }
+
+/* v9: 대시보드 진행중 과업 접기 */
+details.dash-tasks > summary { cursor: pointer; font-size: 15px; font-weight: 700; list-style: none;
+  display: flex; gap: 8px; align-items: center; user-select: none; }
+details.dash-tasks > summary::-webkit-details-marker { display: none; }
+details.dash-tasks > summary::before { content: "▸"; color: var(--sub); transition: transform .15s; }
+details.dash-tasks[open] > summary::before { transform: rotate(90deg); }
+
 /* v6: 알림 (in-app notifications) */
 #notif-bell { margin-bottom: 10px; }
 .notif-btn { width: 100%; text-align: left; background: #39342B; color: #EDE9E0; border: 1px solid #4A4436;
