@@ -293,16 +293,27 @@ async function route() {
 
 /* ══ 대시보드 ══ */
 async function vDashboard() {
+  const t = today();
+  const p2 = n => String(n).padStart(2, "0");
+  const iso = d => d.getFullYear() + "-" + p2(d.getMonth() + 1) + "-" + p2(d.getDate());
+  const base = new Date(t + "T00:00:00");
+  const dow = (base.getDay() + 6) % 7;                       // 월=0 … 일=6
+  const thisMon = new Date(base); thisMon.setDate(base.getDate() - dow);
+  const startMon = new Date(thisMon); startMon.setDate(thisMon.getDate() - 7);   // 지난주 월
+  const endSun = new Date(thisMon); endSun.setDate(thisMon.getDate() + 13);      // 다음주 일
+
   const [notices, tasks, issues, att, cmts] = await Promise.all([
-    q(sb.from("notices").select("*").order("created_at", { ascending: false }).limit(5)),
+    q(sb.from("notices").select("*").order("created_at", { ascending: false }).limit(8)),
     q(sb.from("wbs_tasks").select("*")),
     q(sb.from("wbs_issues").select("*")),
-    q(sb.from("attendance").select("*").gte("att_date", today()).order("att_date").limit(12)),
+    q(sb.from("attendance").select("*").gte("att_date", t).order("att_date").limit(12)),
     q(sb.from("comments").select("target_id").eq("target_table", "wbs_issues")),
   ]);
+  let calEvents = [];
+  try { calEvents = await q(sb.from("calendar_events").select("*").gte("event_date", iso(startMon)).lte("event_date", iso(endSun)).order("id")); } catch (_) {}
+
   const cmtCount = {};
   for (const c of cmts) cmtCount[c.target_id] = (cmtCount[c.target_id] || 0) + 1;
-  const t = today();
   const openTasks = tasks.filter(x => (x.progress ?? 0) < 1)
     .sort((a, b) => (a.end_plan || "9999").localeCompare(b.end_plan || "9999"));
   const late = openTasks.filter(x => x.end_plan && x.end_plan < t);
@@ -310,16 +321,43 @@ async function vDashboard() {
     .sort((a, b) => (b.issue_date || "").localeCompare(a.issue_date || ""));
   const avg = tasks.length ? tasks.reduce((s, x) => s + (x.progress ?? 0), 0) / tasks.length : 0;
 
+  // 주 달력 (지난주·이번주·다음주 3주)
+  const evBy = {};
+  calEvents.forEach(e => (evBy[e.event_date] = evBy[e.event_date] || []).push(e));
+  const wd = ["월", "화", "수", "목", "금", "토", "일"];
+  const wlab = ["지난주", "이번주", "다음주"];
+  let calRows = "";
+  for (let w = 0; w < 3; w++) {
+    calRows += `<div class="cal-wlabel">${wlab[w]}</div>`;
+    for (let d = 0; d < 7; d++) {
+      const cell = new Date(startMon); cell.setDate(startMon.getDate() + w * 7 + d);
+      const cs = iso(cell);
+      const cls = (cs === t ? " cal-today" : "") + (d === 5 ? " cal-sat" : d === 6 ? " cal-sun" : "") + (isMaster() ? " cal-edit" : "");
+      calRows += `<div class="cal-cell${cls}" ${isMaster() ? `onclick="calAdd('${cs}')"` : ""}>
+        <div class="cal-dnum">${cell.getMonth() + 1}/${cell.getDate()}</div>
+        ${(evBy[cs] || []).map(e => `<div class="cal-ev c-${esc(e.color || "blue")}" title="${esc(e.title)}"><span class="cal-ev-t">${esc(e.title)}</span>${isMaster() ? `<span class="cal-ev-x" onclick="event.stopPropagation();calDel(${e.id})">×</span>` : ""}</div>`).join("")}
+      </div>`;
+    }
+  }
+
   app.innerHTML = `
   <h1>대시보드</h1><p class="page-sub">CM기획팀 업무 현황 (${t})</p>
 
-  <div class="panel notice-panel"><h2>📢 공지</h2>
+  <div class="panel"><h2>🗓 주 달력 <small class="muted">지난주 · 이번주 · 다음주${isMaster() ? " — 날짜 클릭하여 일정 추가" : ""}</small></h2>
+    <div class="cal-grid">
+      <div class="cal-hcell"></div>${wd.map((n, i) => `<div class="cal-hcell${i === 5 ? " cal-sat" : i === 6 ? " cal-sun" : ""}">${n}</div>`).join("")}
+      ${calRows}
+    </div>
+  </div>
+
+  <div class="panel notice-panel"><h2>📢 공지 · 팀 전달사항</h2>
     ${notices.length ? notices.map(n => `<div class="notice-item">
-      <div class="meta">${esc(n.author)} · ${kstDateTime(n.created_at)}
+      <div class="meta"><span class="badge ${n.type === "team" ? "b-prog" : "b-warn"}">${n.type === "team" ? "팀 전달" : "회사 공지"}</span> ${esc(n.author)} · ${kstDateTime(n.created_at)}
         ${isMaster() ? `<button class="btn sm ghost" onclick="noticeDel(${n.id})">삭제</button>` : ""}</div>
       <div class="body">${esc(n.content)}</div></div>`).join("") : '<p class="muted">등록된 공지가 없습니다.</p>'}
     ${isMaster() ? `<form id="notice-form" class="row" style="margin-top:10px;margin-bottom:0">
-      <input type="text" id="notice-content" placeholder="공지 입력 (팀장 전용)" style="flex:1" required>
+      <select id="notice-type"><option value="company">회사 공지</option><option value="team">팀 전달</option></select>
+      <input type="text" id="notice-content" placeholder="공지 / 팀 전달사항 입력 (팀장 전용)" style="flex:1;min-width:180px" required>
       <button class="btn" type="submit">등록</button></form>` : ""}
   </div>
 
@@ -345,25 +383,47 @@ async function vDashboard() {
     </tbody></table>` : '<p class="muted">예정 없음</p>'}
   </div>
 
-  <div class="panel"><h2>진행 중 과업 (${openTasks.length}) <small class="muted">— 기한 경과 ${late.length}건 강조</small></h2>
-    <div class="tbl-wrap" style="max-height:none"><table><thead><tr><th>업무</th><th>담당</th><th>Start</th><th>End(plan)</th><th>진행률</th></tr></thead><tbody>
+  <details class="panel dash-tasks"><summary>진행 중 과업 (${openTasks.length}) <small class="muted">— 기한 경과 ${late.length}건 · 클릭하여 펼치기</small></summary>
+    <div class="tbl-wrap" style="max-height:none;margin-top:10px"><table><thead><tr><th>업무</th><th>담당</th><th>Start</th><th>End(plan)</th><th>진행률</th></tr></thead><tbody>
     ${openTasks.map(x => `<tr ${x.end_plan && x.end_plan < t ? 'class="row-late"' : ""}>
       <td class="wrap">${esc(x.lv6_content || x.lv5_work)}</td><td>${esc(x.assignee)}</td>
       <td>${fmtD(x.start_date)}</td>
       <td>${x.end_plan && x.end_plan < t ? `<span class="badge b-late">${fmtD(x.end_plan)}</span>` : fmtD(x.end_plan)}</td>
       <td>${progBar(x.progress)}</td></tr>`).join("")}
     </tbody></table></div>
-  </div>`;
+  </details>`;
 
   const nf = $("#notice-form");
   if (nf) nf.addEventListener("submit", async (e) => {
     e.preventDefault();
     try {
-      await q(sb.from("notices").insert({ author: me().name, content: $("#notice-content").value.trim() }));
-      toast("공지 등록 완료"); route();
-    } catch (_) {}
+      await q(sb.from("notices").insert({ author: me().name, content: $("#notice-content").value.trim(), type: $("#notice-type").value }));
+      toast("등록 완료"); route();
+    } catch (_) { toast("등록 실패 — notices.type 컬럼(마이그레이션 SQL) 적용을 확인하세요.", true); }
   });
 }
+window.calAdd = function (dateISO) {
+  if (!isMaster()) return toast("일정 추가는 팀장만 가능합니다.", true);
+  modal("일정 추가 · " + dateISO, [
+    fld("제목 <span class='req'>*</span>", `<input type="text" name="title" style="width:100%" required maxlength="40" placeholder="예: 사장님 세미나, 착수보고">`),
+    fld("색상 구분", `<select name="color" style="width:100%">
+      <option value="blue">🔵 파랑 (일정 · 회의)</option>
+      <option value="red">🔴 빨강 (마감 · 중요)</option>
+      <option value="green">🟢 초록 (완료 · 승인)</option>
+      <option value="amber">🟠 주황 (주의)</option>
+      <option value="gray">⚪ 회색 (기타)</option></select>`),
+  ].join(""), async (f) => {
+    try {
+      await q(sb.from("calendar_events").insert({ event_date: dateISO, title: f.get("title").trim(), color: f.get("color"), created_by: me().name }));
+      toast("일정 추가 완료"); route();
+    } catch (_) { toast("추가 실패 — calendar_events 테이블(마이그레이션 SQL) 적용을 확인하세요.", true); return false; }
+  }, "추가");
+};
+window.calDel = async function (id) {
+  if (!isMaster()) return toast("일정 삭제는 팀장만 가능합니다.", true);
+  if (!confirm("이 일정을 삭제할까요?")) return;
+  try { await q(sb.from("calendar_events").delete().eq("id", id)); toast("삭제됨"); route(); } catch (_) {}
+};
 window.noticeDel = async function (id) {
   if (!isMaster()) return toast("공지 삭제는 팀장만 가능합니다.", true);
   if (!confirm("공지를 삭제할까요?")) return;
