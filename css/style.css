@@ -211,6 +211,14 @@ summary::-webkit-details-marker { display: none; }
   .issue-grid { grid-template-columns: 1fr; }
 }
 
+/* v8: 실시간 접속자 (Presence) */
+#presence { margin-bottom: 8px; }
+.presence-row { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.presence-dot { width: 27px; height: 27px; border-radius: 50%; background: var(--accent); color: #fff;
+  display: inline-flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700;
+  letter-spacing: -.5px; flex-shrink: 0; border: 1.5px solid #3f544e; }
+.presence-dot.self { background: var(--warn); border-color: #e0916a; }
+
 /* v6: 알림 (in-app notifications) */
 #notif-bell { margin-bottom: 10px; }
 .notif-btn { width: 100%; text-align: left; background: #39342B; color: #EDE9E0; border: 1px solid #4A4436;
@@ -262,4 +270,4 @@ summary::-webkit-details-marker { display: none; }
 .badge.b-hold { background: #F6D3C2; color: #9A3E14; }
 .task-lc { display: inline-block; margin-top: 4px; font-size: 11.5px; color: var(--accent); background: var(--accent-soft);
   border-radius: 6px; padding: 2px 7px; }
-.task-lc b { color: var(--accent); }
+.task-lc 
