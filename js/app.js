@@ -733,6 +733,7 @@ async function vIssueDetail(id) {
   _issueCache = x;
   const myImgs = imgs.filter(i => x.seq != null && +i.issue_seq === +x.seq);
   const locked = x.request_go && x.request_go.startsWith("GO");
+  const nextGo = !locked ? "GO" : (x.request_go === "GO" ? "GO*2" : "GO*" + (((parseInt((x.request_go.split("*")[1] || "1"), 10)) || 1) + 1));
   const canEd = canEditOwn(x.assignee);
   const comments = await q(sb.from("comments").select("*").eq("target_table", "wbs_issues").eq("target_id", id).order("created_at"));
 
@@ -754,9 +755,8 @@ async function vIssueDetail(id) {
   </div>
   <div class="row" style="margin-top:14px">
     ${canEd && !locked && x.request_go !== "Cancel" ? `<button class="btn" onclick="issueGo(${x.id}, null)">GO 제출 (검토 요청)</button>` : ""}
-    ${canEd && locked && x.status !== "완료" ? `
-      <button class="btn ghost" onclick="issueGo(${x.id}, '${esc(x.request_go)}')">재질의 (GO*n)</button>
-      <button class="btn ghost" onclick="issueClose(${x.id})">완료 처리</button>` : ""}
+    ${canEd && locked && x.request_go !== "Cancel" ? `<button class="btn ghost" onclick="issueGo(${x.id}, '${esc(x.request_go)}')">재질의 (${nextGo})</button>` : ""}
+    ${canEd && locked && x.status !== "완료" ? `<button class="btn ghost" onclick="issueClose(${x.id})">완료 처리</button>` : ""}
     ${canEd ? `<button class="btn ghost" style="color:var(--danger)" onclick="issueDel(${x.id})">이슈 삭제</button>` : ""}
     <a class="btn ghost" href="#/issues" style="text-decoration:none">← 목록</a>
   </div>
@@ -854,6 +854,7 @@ window.issueClose = async function (id) {
 
 async function vIssueNew() {
   if (!canWrite()) { app.innerHTML = '<div class="panel">이슈 등록은 로그인이 필요합니다.</div>'; return; }
+  const dels = await q(sb.from("deliverables").select("*").order("no", { ascending: false }));
   app.innerHTML = `
   <h1>이슈 등록</h1>
   <p class="page-sub">안건은 1문장, 질의와 본인생각은 번호 목록으로 1:1 대응</p>
@@ -870,9 +871,25 @@ async function vIssueNew() {
       <textarea id="i-question" required placeholder="1. 질의&#10;2. 질의"></textarea></div>
     <div class="field"><label>본인의 생각 <span class="req">*</span></label>
       <textarea id="i-opinion" required placeholder="1. 의견 (질의 1에 대한)&#10;2. 의견"></textarea></div>
-    <div class="field"><label>참고 자료</label><input type="text" id="i-ref" style="width:100%" placeholder="링크 또는 자료명"></div>
+    <div class="field"><label>참고 자료</label>
+      <div class="row" style="margin-bottom:6px">
+        <select id="i-ref-pick" style="flex:1;min-width:200px">
+          <option value="">참고자료에서 선택 (구글 시트 등)…</option>
+          ${dels.map(d => `<option value="${esc(d.url || d.title)}" data-title="${esc(d.title)}">${esc(d.title)}${d.url ? "" : " (링크없음)"}</option>`).join("")}
+        </select>
+        <button type="button" class="btn sm ghost" onclick="document.getElementById('i-ref').value='';document.getElementById('i-ref-pick').value=''">지우기</button>
+      </div>
+      <input type="text" id="i-ref" style="width:100%" placeholder="위에서 선택하거나 링크·자료명 직접 입력">
+    </div>
     <button class="btn" type="submit">저장 (GO 제출은 상세 화면에서)</button>
   </form></div>`;
+  $("#i-ref-pick").addEventListener("change", (e) => {
+    const opt = e.target.selectedOptions[0];
+    if (!opt || !opt.value) return;
+    const title = opt.getAttribute("data-title") || "";
+    const url = opt.value;
+    $("#i-ref").value = (url && url !== title) ? `${title} — ${url}` : title;
+  });
   $("#issue-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const agenda = $("#i-agenda").value.trim();
@@ -1182,75 +1199,35 @@ window.dailyCmtDel = async function (id) {
   try { await q(sb.from("card_comments").delete().eq("id", id)); toast("삭제됨"); route(); } catch (_) {}
 };
 
-/* ══ 성과물 · 참고자료 ══ */
+/* ══ 참고자료 (구 성과물) ══ */
 async function vDeliverables() {
-  const [dels, refs] = await Promise.all([
-    q(sb.from("deliverables").select("*").order("no")),
-    q(sb.from("reference_materials").select("*").order("no")),
-  ]);
+  // 신규 항목이 맨 위로: no 내림차순 정렬
+  const dels = await q(sb.from("deliverables").select("*").order("no", { ascending: false }));
   app.innerHTML = `
-  <h1>성과물 · 참고자료</h1><p class="page-sub">산출물 링크 대장 — 링크 추가 및 파일 업로드 가능 (로그인 필요)</p>
-  <div class="panel"><h2>성과물 (${dels.length})</h2>
+  <h1>참고자료</h1><p class="page-sub">참고자료 링크 대장 — 구글 시트 등 링크 등록 (로그인 필요). md·html 문서는 [HMCM Mock-up] 메뉴를 활용하세요.</p>
+  <div class="panel"><h2>참고자료 (${dels.length})</h2>
     ${canWrite() ? `<div class="row">
       <button class="btn sm" onclick="delAddLink()">+ 링크 추가</button>
-      <button class="btn sm ghost" onclick="document.getElementById('del-file').click()">📎 파일 업로드</button>
-      <input type="file" id="del-file" class="hidden" onchange="delUpload(this)">
     </div>` : ""}
-    <div class="tbl-wrap" style="max-height:45vh"><table>
+    <p class="hint" style="color:var(--sub);margin:-2px 0 10px">신규 항목이 맨 위에 표시됩니다. 파일 업로드는 지원하지 않으며 구글 시트 등 링크로 등록하세요. md·html 산출물은 [HMCM Mock-up]에서 관리하는 것을 권장합니다.</p>
+    <div class="tbl-wrap" style="max-height:60vh"><table>
     <thead><tr><th>번호</th><th>설명</th><th>URL</th><th>담당</th><th>비고</th></tr></thead><tbody>
     ${dels.map(d => `<tr><td>${d.no ?? ""}</td><td class="wrap">${esc(d.title)}</td>
       <td>${d.url ? `<a class="link" href="${esc(d.url)}" target="_blank" rel="noopener">열기 ↗</a>` : ""}</td>
       <td>${esc(d.assignee)}</td><td class="wrap">${esc(d.remark)}</td></tr>`).join("")}
-    </tbody></table></div></div>
-  <div class="panel"><h2>참고자료 (${refs.length})</h2>
-    ${canWrite() ? `<div class="row"><button class="btn sm" onclick="refAddLink()">+ 링크 추가</button></div>` : ""}
-    <div class="tbl-wrap" style="max-height:45vh"><table>
-    <thead><tr><th>번호</th><th>성과물</th><th>자료</th><th>담당</th></tr></thead><tbody>
-    ${refs.map(r => `<tr><td>${r.no ?? ""}</td><td>${r.deliverable_no ?? ""}</td>
-      <td class="wrap">${r.url ? `<a class="link" href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.title || "링크")}</a>` : esc(r.title)}</td>
-      <td>${esc(r.assignee)}</td></tr>`).join("")}
     </tbody></table></div></div>`;
 }
-window.delUpload = async function (input) {
-  const file = input.files[0]; if (!file) return;
-  if (!canWrite()) return needLogin();
-  const title = prompt("성과물 설명", file.name); if (title == null) return;
-  const path = `deliverables/${Date.now()}_${docKeyEncode(file.name)}`;
-  toast("업로드 중… " + file.name);
-  try {
-    const { error } = await sb.storage.from("files").upload(path, file);
-    if (error) throw error;
-    const url = sb.storage.from("files").getPublicUrl(path).data.publicUrl;
-    const maxNo = Math.max(0, ...(await q(sb.from("deliverables").select("no"))).map(d => d.no || 0));
-    await q(sb.from("deliverables").insert({ no: Math.floor(maxNo) + 1, title, url, assignee: me().name, remark: "업로드 파일" }));
-    toast("파일 업로드 완료"); route();
-  } catch (e) { toast("업로드 실패: " + (e.message || e), true); }
-};
 window.delAddLink = function () {
   if (!canWrite()) return needLogin();
-  modal("성과물 링크 추가", [
+  modal("참고자료 링크 추가", [
     fld("설명 <span class='req'>*</span>", `<input type="text" name="t" style="width:100%" required>`),
-    fld("URL <span class='req'>*</span>", `<input type="text" name="u" style="width:100%" required placeholder="https://...">`),
+    fld("URL <span class='req'>*</span>", `<input type="text" name="u" style="width:100%" required placeholder="https://docs.google.com/spreadsheets/...">`, "구글 시트 등 링크를 입력하세요. (md·html은 HMCM Mock-up 활용 권장)"),
     fld("비고", `<input type="text" name="r" style="width:100%">`),
   ].join(""), async (f) => {
     try {
       const maxNo = Math.max(0, ...(await q(sb.from("deliverables").select("no"))).map(d => d.no || 0));
       await q(sb.from("deliverables").insert({ no: Math.floor(maxNo) + 1, title: f.get("t"), url: f.get("u"), assignee: me().name, remark: f.get("r") || null }));
       toast("링크 추가 완료"); route();
-    } catch (_) { return false; }
-  }, "추가");
-};
-window.refAddLink = function () {
-  if (!canWrite()) return needLogin();
-  modal("참고자료 추가", [
-    fld("자료명 <span class='req'>*</span>", `<input type="text" name="t" style="width:100%" required>`),
-    fld("URL", `<input type="text" name="u" style="width:100%" placeholder="https://... (선택)">`),
-    fld("연관 성과물 번호", `<input type="number" name="d" style="width:120px">`),
-  ].join(""), async (f) => {
-    try {
-      const maxNo = Math.max(0, ...(await q(sb.from("reference_materials").select("no"))).map(d => d.no || 0));
-      await q(sb.from("reference_materials").insert({ no: Math.floor(maxNo) + 1, title: f.get("t"), url: f.get("u") || null, deliverable_no: f.get("d") ? +f.get("d") : null, assignee: me().name }));
-      toast("자료 추가 완료"); route();
     } catch (_) { return false; }
   }, "추가");
 };
