@@ -213,7 +213,7 @@ summary::-webkit-details-marker { display: none; }
 
 /* v8: 실시간 접속자 (Presence) */
 #presence { margin-bottom: 8px; }
-.presence-row { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.presence-row { display: flex; flex-direction: row; flex-wrap: nowrap; justify-content: center; align-items: center; gap: 4px; }
 .presence-dot { width: 27px; height: 27px; border-radius: 50%; background: var(--accent); color: #fff;
   display: inline-flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700;
   letter-spacing: -.5px; flex-shrink: 0; border: 1.5px solid #3f544e; }
