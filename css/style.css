@@ -220,7 +220,7 @@ summary::-webkit-details-marker { display: none; }
 .presence-dot.self { background: var(--warn); border-color: #e0916a; }
 
 /* v9: 대시보드 주 달력 (weekly calendar) */
-.cal-grid { display: grid; grid-template-columns: 44px repeat(7, 1fr); gap: 4px; }
+.cal-grid { display: grid; grid-template-columns: 44px repeat(5, 1fr); gap: 4px; }
 .cal-hcell { text-align: center; font-size: 11px; font-weight: 700; color: var(--sub); padding: 2px 0; }
 .cal-hcell.cal-sat { color: #2563eb; } .cal-hcell.cal-sun { color: var(--danger); }
 .cal-wlabel { display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: var(--sub); }
