@@ -42,6 +42,8 @@ window.changePw = function () {
   }, "변경");
 };
 const isMaster = () => me()?.role === "master";
+/* 주간 업무 요약 대상: 팀장(master) 제외한 팀원 (강지영~이민지 5명) */
+const WEEKLY_MEMBERS = CONFIG.TEAM.filter(m => !Object.values(CONFIG.USERS).some(u => u.name === m && u.role === "master"));
 const hhmm = (ts) => {
   if (!ts) return "";
   const d = new Date(ts);
@@ -1037,7 +1039,7 @@ async function vWeekly() {
     weekMap[r.week_label].cells[r.member + "|" + r.category] = r;
   }
   _weeklyWeeks = weekMap;
-  const members = CONFIG.TEAM.filter(m => rows.some(r => r.member === m));
+  const members = WEEKLY_MEMBERS.filter(m => rows.some(r => r.member === m));
   const CATS = ["DONE", "ISSUE", "PLAN"];
   const catColor = { DONE: "b-done", ISSUE: "b-warn", PLAN: "b-prog" };
   const months = [];
@@ -1148,7 +1150,7 @@ window.weekAdd = function () {
     const label = f.get("label").trim();
     if (_weeklyWeeks[label]) { toast("이미 존재하는 주차입니다.", true); return false; }
     const ins = [];
-    for (const m of CONFIG.TEAM) for (const c of ["DONE", "ISSUE", "PLAN"])
+    for (const m of WEEKLY_MEMBERS) for (const c of ["DONE", "ISSUE", "PLAN"])
       ins.push({ week_label: label, week_start: f.get("s"), week_end: f.get("e"), member: m, category: c, content: "" });
     try { await q(sb.from("weekly_summaries").insert(ins)); toast(label + " 생성 완료 — 본인 칸을 클릭해 입력하세요."); route(); }
     catch (_) { return false; }
