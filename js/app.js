@@ -343,16 +343,16 @@ async function vDashboard() {
   }
 
   app.innerHTML = `
-  <h1>대시보드</h1><p class="page-sub">CM기획팀 업무 현황 (${t})</p>
+  <h1 style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">대시보드 <span class="page-sub" style="margin:0;font-weight:400">CM기획팀 업무 현황 (${t})</span></h1>
 
-  <div class="panel"><h2>🗓 주 달력 <small class="muted">지난주 · 이번주 · 다음주${isMaster() ? " — 날짜 클릭하여 일정 추가" : ""}</small></h2>
+  <div class="panel">
     <div class="cal-grid">
       <div class="cal-hcell"></div>${wd.map(n => `<div class="cal-hcell">${n}</div>`).join("")}
       ${calRows}
     </div>
   </div>
 
-  <div class="panel notice-panel"><h2>📢 공지 · 팀 전달사항</h2>
+  <div class="panel notice-panel">
     ${notices.length ? notices.map(n => `<div class="notice-item">
       <div class="meta"><span class="badge ${n.type === "team" ? "b-prog" : "b-warn"}">${n.type === "team" ? "팀 전달" : "회사 공지"}</span> ${esc(n.author)} · ${kstDateTime(n.created_at)}
         ${isMaster() ? `<button class="btn sm ghost" onclick="noticeEdit(${n.id})">수정</button> <button class="btn sm ghost" onclick="noticeDel(${n.id})">삭제</button>` : ""}</div>
@@ -378,7 +378,7 @@ async function vDashboard() {
     </tbody></table></div>` : '<p class="muted">모든 이슈가 완료되었습니다.</p>'}
   </div>
 
-  <div class="panel"><h2>다가오는 근태</h2>${att.length ? `
+  <div class="panel">${att.length ? `
     <table><thead><tr><th>날짜</th><th>이름</th><th>구분</th><th>비고</th></tr></thead><tbody>
     ${att.map(x => `<tr><td>${fmtD(x.att_date)}</td><td>${esc(x.name)}</td>
       <td><span class="badge b-warn">${esc(x.att_type)}</span></td><td>${esc(x.remark)}</td></tr>`).join("")}
@@ -409,11 +409,11 @@ window.calAdd = function (dateISO) {
   modal("일정 추가 · " + dateISO, [
     fld("제목 <span class='req'>*</span>", `<input type="text" name="title" style="width:100%" required maxlength="40" placeholder="예: 사장님 세미나, 착수보고">`),
     fld("색상 구분", `<select name="color" style="width:100%">
-      <option value="blue">🔵 파랑 (일정 · 회의)</option>
-      <option value="red">🔴 빨강 (마감 · 중요)</option>
-      <option value="green">🟢 초록 (완료 · 승인)</option>
-      <option value="amber">🟠 주황 (주의)</option>
-      <option value="gray">⚪ 회색 (기타)</option></select>`),
+      <option value="green">🟢 일정 (녹색)</option>
+      <option value="red">🔴 중요 (빨강)</option>
+      <option value="amber">🟠 세미나 (주황)</option>
+      <option value="blue">🔵 회의 (파랑)</option>
+      <option value="gray">⚪ 기타 (회색)</option></select>`),
   ].join(""), async (f) => {
     try {
       await q(sb.from("calendar_events").insert({ event_date: dateISO, title: f.get("title").trim(), color: f.get("color"), created_by: me().name }));
@@ -448,7 +448,7 @@ window.calEdit = function (id) {
   const opt = (v, l) => `<option value="${v}"${ev.color === v ? " selected" : ""}>${l}</option>`;
   modal("일정 수정 · " + ev.event_date, [
     fld("제목 <span class='req'>*</span>", `<input type="text" name="title" style="width:100%" required maxlength="40" value="${esc(ev.title)}">`),
-    fld("색상 구분", `<select name="color" style="width:100%">${opt("blue", "🔵 파랑 (일정 · 회의)")}${opt("red", "🔴 빨강 (마감 · 중요)")}${opt("green", "🟢 초록 (완료 · 승인)")}${opt("amber", "🟠 주황 (주의)")}${opt("gray", "⚪ 회색 (기타)")}</select>`),
+    fld("색상 구분", `<select name="color" style="width:100%">${opt("green", "🟢 일정 (녹색)")}${opt("red", "🔴 중요 (빨강)")}${opt("amber", "🟠 세미나 (주황)")}${opt("blue", "🔵 회의 (파랑)")}${opt("gray", "⚪ 기타 (회색)")}</select>`),
   ].join(""), async (f) => {
     try { await q(sb.from("calendar_events").update({ title: f.get("title").trim(), color: f.get("color") }).eq("id", id)); toast("일정 수정 완료"); route(); }
     catch (_) { return false; }
