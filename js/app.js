@@ -324,15 +324,15 @@ async function vDashboard() {
   // 주 달력 (지난주·이번주·다음주 3주)
   const evBy = {};
   calEvents.forEach(e => (evBy[e.event_date] = evBy[e.event_date] || []).push(e));
-  const wd = ["월", "화", "수", "목", "금", "토", "일"];
+  const wd = ["월", "화", "수", "목", "금"];
   const wlab = ["지난주", "이번주", "다음주"];
   let calRows = "";
   for (let w = 0; w < 3; w++) {
     calRows += `<div class="cal-wlabel">${wlab[w]}</div>`;
-    for (let d = 0; d < 7; d++) {
+    for (let d = 0; d < 5; d++) {
       const cell = new Date(startMon); cell.setDate(startMon.getDate() + w * 7 + d);
       const cs = iso(cell);
-      const cls = (cs === t ? " cal-today" : "") + (d === 5 ? " cal-sat" : d === 6 ? " cal-sun" : "") + (isMaster() ? " cal-edit" : "");
+      const cls = (cs === t ? " cal-today" : "") + (isMaster() ? " cal-edit" : "");
       calRows += `<div class="cal-cell${cls}" ${isMaster() ? `onclick="calAdd('${cs}')"` : ""}>
         <div class="cal-dnum">${cell.getMonth() + 1}/${cell.getDate()}</div>
         ${(evBy[cs] || []).map(e => `<div class="cal-ev c-${esc(e.color || "blue")}" title="${esc(e.title)}"><span class="cal-ev-t">${esc(e.title)}</span>${isMaster() ? `<span class="cal-ev-x" onclick="event.stopPropagation();calDel(${e.id})">×</span>` : ""}</div>`).join("")}
@@ -345,7 +345,7 @@ async function vDashboard() {
 
   <div class="panel"><h2>🗓 주 달력 <small class="muted">지난주 · 이번주 · 다음주${isMaster() ? " — 날짜 클릭하여 일정 추가" : ""}</small></h2>
     <div class="cal-grid">
-      <div class="cal-hcell"></div>${wd.map((n, i) => `<div class="cal-hcell${i === 5 ? " cal-sat" : i === 6 ? " cal-sun" : ""}">${n}</div>`).join("")}
+      <div class="cal-hcell"></div>${wd.map(n => `<div class="cal-hcell">${n}</div>`).join("")}
       ${calRows}
     </div>
   </div>
