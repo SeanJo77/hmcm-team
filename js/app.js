@@ -292,6 +292,7 @@ async function route() {
 }
 
 /* ══ 대시보드 ══ */
+let _notices = [], _calEvents = [];
 async function vDashboard() {
   const t = today();
   const p2 = n => String(n).padStart(2, "0");
@@ -311,6 +312,7 @@ async function vDashboard() {
   ]);
   let calEvents = [];
   try { calEvents = await q(sb.from("calendar_events").select("*").gte("event_date", iso(startMon)).lte("event_date", iso(endSun)).order("id")); } catch (_) {}
+  _notices = notices; _calEvents = calEvents;
 
   const cmtCount = {};
   for (const c of cmts) cmtCount[c.target_id] = (cmtCount[c.target_id] || 0) + 1;
@@ -335,7 +337,7 @@ async function vDashboard() {
       const cls = (cs === t ? " cal-today" : "") + (isMaster() ? " cal-edit" : "");
       calRows += `<div class="cal-cell${cls}" ${isMaster() ? `onclick="calAdd('${cs}')"` : ""}>
         <div class="cal-dnum">${cell.getMonth() + 1}/${cell.getDate()}</div>
-        ${(evBy[cs] || []).map(e => `<div class="cal-ev c-${esc(e.color || "blue")}" title="${esc(e.title)}"><span class="cal-ev-t">${esc(e.title)}</span>${isMaster() ? `<span class="cal-ev-x" onclick="event.stopPropagation();calDel(${e.id})">×</span>` : ""}</div>`).join("")}
+        ${(evBy[cs] || []).map(e => `<div class="cal-ev c-${esc(e.color || "blue")}" title="${esc(e.title)}"><span class="cal-ev-t"${isMaster() ? ` style="cursor:pointer" onclick="event.stopPropagation();calEdit(${e.id})"` : ""}>${esc(e.title)}</span>${isMaster() ? `<span class="cal-ev-x" onclick="event.stopPropagation();calDel(${e.id})">×</span>` : ""}</div>`).join("")}
       </div>`;
     }
   }
@@ -353,7 +355,7 @@ async function vDashboard() {
   <div class="panel notice-panel"><h2>📢 공지 · 팀 전달사항</h2>
     ${notices.length ? notices.map(n => `<div class="notice-item">
       <div class="meta"><span class="badge ${n.type === "team" ? "b-prog" : "b-warn"}">${n.type === "team" ? "팀 전달" : "회사 공지"}</span> ${esc(n.author)} · ${kstDateTime(n.created_at)}
-        ${isMaster() ? `<button class="btn sm ghost" onclick="noticeDel(${n.id})">삭제</button>` : ""}</div>
+        ${isMaster() ? `<button class="btn sm ghost" onclick="noticeEdit(${n.id})">수정</button> <button class="btn sm ghost" onclick="noticeDel(${n.id})">삭제</button>` : ""}</div>
       <div class="body">${esc(n.content)}</div></div>`).join("") : '<p class="muted">등록된 공지가 없습니다.</p>'}
     ${isMaster() ? `<form id="notice-form" class="row" style="margin-top:10px;margin-bottom:0">
       <select id="notice-type"><option value="company">회사 공지</option><option value="team">팀 전달</option></select>
@@ -428,6 +430,29 @@ window.noticeDel = async function (id) {
   if (!isMaster()) return toast("공지 삭제는 팀장만 가능합니다.", true);
   if (!confirm("공지를 삭제할까요?")) return;
   try { await q(sb.from("notices").delete().eq("id", id)); toast("삭제됨"); route(); } catch (_) {}
+};
+window.noticeEdit = function (id) {
+  if (!isMaster()) return toast("공지 수정은 팀장만 가능합니다.", true);
+  const n = _notices.find(x => x.id === id); if (!n) return;
+  modal("공지 · 팀 전달 수정", [
+    fld("유형", `<select name="type" style="width:100%"><option value="company"${n.type !== "team" ? " selected" : ""}>회사 공지</option><option value="team"${n.type === "team" ? " selected" : ""}>팀 전달</option></select>`),
+    fld("내용 <span class='req'>*</span>", `<textarea name="content" required style="min-height:90px">${esc(n.content)}</textarea>`),
+  ].join(""), async (f) => {
+    try { await q(sb.from("notices").update({ content: f.get("content").trim(), type: f.get("type") }).eq("id", id)); toast("수정 완료"); route(); }
+    catch (_) { toast("수정 실패 — notices.type 컬럼(마이그레이션 SQL) 확인", true); return false; }
+  });
+};
+window.calEdit = function (id) {
+  if (!isMaster()) return toast("일정 수정은 팀장만 가능합니다.", true);
+  const ev = _calEvents.find(x => x.id === id); if (!ev) return;
+  const opt = (v, l) => `<option value="${v}"${ev.color === v ? " selected" : ""}>${l}</option>`;
+  modal("일정 수정 · " + ev.event_date, [
+    fld("제목 <span class='req'>*</span>", `<input type="text" name="title" style="width:100%" required maxlength="40" value="${esc(ev.title)}">`),
+    fld("색상 구분", `<select name="color" style="width:100%">${opt("blue", "🔵 파랑 (일정 · 회의)")}${opt("red", "🔴 빨강 (마감 · 중요)")}${opt("green", "🟢 초록 (완료 · 승인)")}${opt("amber", "🟠 주황 (주의)")}${opt("gray", "⚪ 회색 (기타)")}</select>`),
+  ].join(""), async (f) => {
+    try { await q(sb.from("calendar_events").update({ title: f.get("title").trim(), color: f.get("color") }).eq("id", id)); toast("일정 수정 완료"); route(); }
+    catch (_) { return false; }
+  });
 };
 
 /* ══ WBS 진행 현황 ══ */
@@ -784,7 +809,7 @@ async function vIssues() {
   render();
 }
 
-let _issueCache = null;
+let _issueCache = null, _issueComments = [];
 async function vIssueDetail(id) {
   const [x, imgs] = await Promise.all([
     q(sb.from("wbs_issues").select("*").eq("id", id).single()),
@@ -796,19 +821,20 @@ async function vIssueDetail(id) {
   const nextGo = !locked ? "GO" : (x.request_go === "GO" ? "GO*2" : "GO*" + (((parseInt((x.request_go.split("*")[1] || "1"), 10)) || 1) + 1));
   const canEd = canEditOwn(x.assignee);
   const comments = await q(sb.from("comments").select("*").eq("target_table", "wbs_issues").eq("target_id", id).order("created_at"));
+  _issueComments = comments;
 
-  const block = (title, body, full = false) =>
-    `<div class="issue-block ${full ? "full" : ""}"><h3>${title}</h3><div class="body">${esc(body) || '<span class="muted">-</span>'}</div></div>`;
+  const block = (title, body, field, full = false) =>
+    `<div class="issue-block ${full ? "full" : ""}"><h3>${title}${field && canEd && !locked ? ` <button class="btn sm ghost" onclick="issueFieldEdit(${x.id}, '${field}')">✎ 수정</button>` : ""}</h3><div class="body">${esc(body) || '<span class="muted">-</span>'}</div></div>`;
 
   app.innerHTML = `
   <h1>이슈 상세 <small class="muted">#${x.seq ?? x.id}</small></h1>
   <p class="page-sub">${fmtD(x.issue_date)}${x.created_at ? ` <small class="muted">${hhmm(x.created_at)} 작성</small>` : ""} · ${esc(x.assignee || "")} · ${goBadge(x.request_go)} ${issueStatusBadge(x)}</p>
   ${locked ? '<div class="lock-notice">🔒 GO 제출됨 — 안건/질의/본인생각은 수정할 수 없습니다. 추가 의견은 댓글로.</div>' : ""}
   <div class="issue-grid">
-    ${block("안건 (왜 논의가 필요한가)", x.agenda, true)}
-    ${block("질의 사항 / 요청사항", x.question)}
-    ${block("본인의 생각", x.opinion)}
-    ${block("참고 자료", x.ref_material)}
+    ${block("안건 (왜 논의가 필요한가)", x.agenda, "agenda", true)}
+    ${block("질의 사항 / 요청사항", x.question, "question")}
+    ${block("본인의 생각", x.opinion, "opinion")}
+    ${block("참고 자료", x.ref_material, "ref_material")}
     <div class="issue-block"><h3>피드백 ${canEd ? `<button class="btn sm ghost" onclick="issueFeedback(${x.id})">✎ 입력/수정</button>` : ""}</h3>
       <div class="body">${esc(x.feedback) || '<span class="muted">-</span>'}</div></div>
     ${myImgs.length ? `<div class="issue-block full"><h3>첨부 이미지</h3>${myImgs.map(i => `<img class="issue-img" src="${esc(i.image_path)}" loading="lazy">`).join("")}</div>` : ""}
@@ -823,7 +849,7 @@ async function vIssueDetail(id) {
   <div class="panel" style="margin-top:18px"><h2>댓글 ${comments.length ? `(${comments.length})` : ""}</h2>
     <div id="cmt-list">${comments.map(c => `<div class="comment">
       <div class="meta"><b>${esc(c.author)}</b>${c.mention ? ` → @${esc(c.mention)}` : ""} · ${String(c.created_at).slice(0, 16).replace("T", " ")}
-        ${canWrite() && (c.author === me().name || isMaster()) ? `<button class="btn sm ghost" onclick="cmtDel(${c.id}, ${id}, '${esc(c.author)}')">삭제</button>` : ""}</div>
+        ${canWrite() && (c.author === me().name || isMaster()) ? `<button class="btn sm ghost" onclick="cmtEdit(${c.id}, ${id})">수정</button> <button class="btn sm ghost" onclick="cmtDel(${c.id}, ${id}, '${esc(c.author)}')">삭제</button>` : ""}</div>
       <div class="body">${esc(c.content)}</div></div>`).join("") || '<p class="muted">댓글 없음</p>'}
     </div>
     ${canWrite() ? `
@@ -852,6 +878,32 @@ window.cmtDel = async function (cid, issueId, author) {
   if (!guardEdit(author)) return;
   if (!confirm("댓글을 삭제할까요?")) return;
   try { await q(sb.from("comments").delete().eq("id", cid)); toast("댓글 삭제됨"); vIssueDetail(issueId); } catch (_) {}
+};
+window.cmtEdit = function (cid, issueId) {
+  const c = _issueComments.find(x => x.id === cid); if (!c) return;
+  if (!guardEdit(c.author)) return;
+  modal("댓글 수정", fld("내용", `<textarea name="v" required style="min-height:90px">${esc(c.content)}</textarea>`), async (f) => {
+    const val = (f.get("v") || "").trim(); if (!val) return false;
+    try { await q(sb.from("comments").update({ content: val }).eq("id", cid)); toast("댓글 수정 완료"); vIssueDetail(issueId); }
+    catch (_) { return false; }
+  });
+};
+window.issueFieldEdit = function (id, field) {
+  const x = _issueCache && _issueCache.id === id ? _issueCache : null;
+  if (!x) return;
+  if (!guardEdit(x.assignee)) return;
+  if (x.request_go && x.request_go.startsWith("GO")) return toast("GO 제출 후에는 수정할 수 없습니다.", true);
+  const labels = { agenda: "안건", question: "질의 사항 / 요청사항", opinion: "본인의 생각", ref_material: "참고 자료" };
+  const cur = x[field] || "", isAgenda = field === "agenda";
+  const input = isAgenda
+    ? `<input type="text" name="v" style="width:100%" maxlength="120" required value="${esc(cur)}">`
+    : `<textarea name="v" style="min-height:120px"${field === "ref_material" ? "" : " required"}>${esc(cur)}</textarea>`;
+  modal((labels[field] || "내용") + " 수정", fld("내용", input), async (f) => {
+    const val = (f.get("v") || "").trim();
+    if (isAgenda && /\n/.test(val)) { toast("안건은 1문장(줄바꿈 없이)으로 작성하세요.", true); return false; }
+    try { await q(sb.from("wbs_issues").update({ [field]: val || null }).eq("id", id)); toast("수정 완료"); vIssueDetail(id); }
+    catch (_) { return false; }
+  });
 };
 window.issueDel = async function (id) {
   const x = _issueCache && _issueCache.id === id ? _issueCache : null;
@@ -1029,7 +1081,7 @@ async function vWeekly() {
           const key = w.label + "|" + m;
           const list = _weekCmts[key] || [];
           return `<div class="week-cell wk-cmt">
-            ${list.map(c => `<div class="cardcmt"><div class="cardcmt-b">${esc(c.content)}</div>${isMaster() ? `<button type="button" class="cardcmt-x" onclick="weekCmtDel(${c.id})">✕</button>` : ""}</div>`).join("")}
+            ${list.map(c => `<div class="cardcmt"><div class="cardcmt-b">${esc(c.content)}</div>${isMaster() ? `<button type="button" class="cardcmt-x" onclick="weekCmtEdit(${c.id})">✎</button><button type="button" class="cardcmt-x" onclick="weekCmtDel(${c.id})">✕</button>` : ""}</div>`).join("")}
             ${isMaster() ? `<button type="button" class="btn sm ghost" onclick="weekCmtAdd('${esc(w.label)}','${esc(m)}')">+ 코멘트</button>` : (list.length ? "" : '<span class="muted" style="font-size:11px">-</span>')}
           </div>`;
         }).join("")}
@@ -1121,6 +1173,22 @@ window.weekCmtDel = async function (id) {
   if (!confirm("코멘트를 삭제할까요?")) return;
   try { await q(sb.from("card_comments").delete().eq("id", id)); toast("삭제됨"); route(); } catch (_) {}
 };
+function findCardCmt(cache, id) {
+  for (const k in cache) { const hit = (cache[k] || []).find(c => c.id === id); if (hit) return hit; }
+  return null;
+}
+function cardCmtEditModal(c, id) {
+  modal("팀장 코멘트 수정", fld("코멘트", `<textarea name="v" required style="min-height:90px">${esc(c.content)}</textarea>`), async (f) => {
+    const val = (f.get("v") || "").trim(); if (!val) return false;
+    try { await q(sb.from("card_comments").update({ content: val }).eq("id", id)); toast("수정 완료"); route(); }
+    catch (_) { return false; }
+  });
+}
+window.weekCmtEdit = function (id) {
+  if (!isMaster()) return toast("팀장만 수정할 수 있습니다.", true);
+  const c = findCardCmt(_weekCmts, id); if (!c) return;
+  cardCmtEditModal(c, id);
+};
 
 /* ══ 일일 기록 ══ */
 let _dailyCmts = {};
@@ -1185,7 +1253,7 @@ async function vDaily() {
                 const cmts2 = _dailyCmts[dt + "|" + mem] || [];
                 if (!cmts2.length && !isMaster()) return "";
                 return `<div class="daily-cmts">
-                  ${cmts2.map(c => `<div class="cardcmt"><span class="badge b-go">팀장</span> <span class="cardcmt-b">${esc(c.content)}</span>${isMaster() ? `<button type="button" class="cardcmt-x" onclick="dailyCmtDel(${c.id})">✕</button>` : ""}</div>`).join("")}
+                  ${cmts2.map(c => `<div class="cardcmt"><span class="badge b-go">팀장</span> <span class="cardcmt-b">${esc(c.content)}</span>${isMaster() ? `<button type="button" class="cardcmt-x" onclick="dailyCmtEdit(${c.id})">✎</button><button type="button" class="cardcmt-x" onclick="dailyCmtDel(${c.id})">✕</button>` : ""}</div>`).join("")}
                   ${isMaster() ? `<button type="button" class="btn sm ghost cardcmt-add" onclick="dailyCmtAdd('${dt}','${esc(mem)}')">+ 팀장 코멘트</button>` : ""}
                 </div>`;
               })()}
@@ -1258,11 +1326,18 @@ window.dailyCmtDel = async function (id) {
   if (!confirm("코멘트를 삭제할까요?")) return;
   try { await q(sb.from("card_comments").delete().eq("id", id)); toast("삭제됨"); route(); } catch (_) {}
 };
+window.dailyCmtEdit = function (id) {
+  if (!isMaster()) return toast("팀장만 수정할 수 있습니다.", true);
+  const c = findCardCmt(_dailyCmts, id); if (!c) return;
+  cardCmtEditModal(c, id);
+};
 
 /* ══ 참고자료 (구 성과물) ══ */
+let _dels = [];
 async function vDeliverables() {
   // 신규 항목이 맨 위로: no 내림차순 정렬
   const dels = await q(sb.from("deliverables").select("*").order("no", { ascending: false }));
+  _dels = dels;
   app.innerHTML = `
   <h1>참고자료</h1><p class="page-sub">참고자료 링크 대장 — 구글 시트 등 링크 등록 (로그인 필요). md·html 문서는 [HMCM Mock-up] 메뉴를 활용하세요.</p>
   <div class="panel"><h2>참고자료 (${dels.length})</h2>
@@ -1271,10 +1346,10 @@ async function vDeliverables() {
     </div>` : ""}
     <p class="hint" style="color:var(--sub);margin:-2px 0 10px">신규 항목이 맨 위에 표시됩니다. 파일 업로드는 지원하지 않으며 구글 시트 등 링크로 등록하세요. md·html 산출물은 [HMCM Mock-up]에서 관리하는 것을 권장합니다.</p>
     <div class="tbl-wrap" style="max-height:60vh"><table>
-    <thead><tr><th>번호</th><th>설명</th><th>URL</th><th>담당</th><th>비고</th></tr></thead><tbody>
+    <thead><tr><th>번호</th><th>설명</th><th>URL</th><th>담당</th><th>비고</th>${canWrite() ? "<th></th>" : ""}</tr></thead><tbody>
     ${dels.map(d => `<tr><td>${d.no ?? ""}</td><td class="wrap">${esc(d.title)}</td>
       <td>${d.url ? `<a class="link" href="${esc(d.url)}" target="_blank" rel="noopener">열기 ↗</a>` : ""}</td>
-      <td>${esc(d.assignee)}</td><td class="wrap">${esc(d.remark)}</td></tr>`).join("")}
+      <td>${esc(d.assignee)}</td><td class="wrap">${esc(d.remark)}</td>${canWrite() ? `<td style="white-space:nowrap">${canEditOwn(d.assignee) ? `<button class="btn sm ghost" onclick="delEdit(${d.id})">수정</button> <button class="btn sm ghost" style="color:var(--danger)" onclick="delDel(${d.id})">삭제</button>` : '<span class="muted">-</span>'}</td>` : ""}</tr>`).join("")}
     </tbody></table></div></div>`;
 }
 window.delAddLink = function () {
@@ -1290,6 +1365,24 @@ window.delAddLink = function () {
       toast("링크 추가 완료"); route();
     } catch (_) { return false; }
   }, "추가");
+};
+window.delEdit = function (id) {
+  const d = _dels.find(x => x.id === id); if (!d) return;
+  if (!guardEdit(d.assignee)) return;
+  modal("참고자료 수정", [
+    fld("설명 <span class='req'>*</span>", `<input type="text" name="t" style="width:100%" required value="${esc(d.title)}">`),
+    fld("URL <span class='req'>*</span>", `<input type="text" name="u" style="width:100%" required value="${esc(d.url || "")}" placeholder="https://docs.google.com/spreadsheets/...">`),
+    fld("비고", `<input type="text" name="r" style="width:100%" value="${esc(d.remark || "")}">`),
+  ].join(""), async (f) => {
+    try { await q(sb.from("deliverables").update({ title: f.get("t"), url: f.get("u"), remark: f.get("r") || null }).eq("id", id)); toast("수정 완료"); route(); }
+    catch (_) { return false; }
+  });
+};
+window.delDel = async function (id) {
+  const d = _dels.find(x => x.id === id);
+  if (!guardEdit(d?.assignee)) return;
+  if (!confirm("이 참고자료를 삭제할까요?")) return;
+  try { await q(sb.from("deliverables").delete().eq("id", id)); toast("삭제됨"); route(); } catch (_) {}
 };
 
 /* ══ 자료실 ══ */
@@ -1424,8 +1517,10 @@ window.docDel = async function (name) {
 };
 
 /* ══ 근태 ══ */
+let _att = [];
 async function vAttendance() {
   const rows = await q(sb.from("attendance").select("*").order("att_date", { ascending: false }));
+  _att = rows;
   const months = [...new Set(rows.map(r => (r.att_date || "").slice(0, 7)))].filter(Boolean).sort().reverse();
   const curMon = today().slice(0, 7);
   const state = { month: months.includes(curMon) ? curMon : (months[0] || "") };
@@ -1447,7 +1542,7 @@ async function vAttendance() {
     $("#att-body").innerHTML = f.map(x => `<tr ${x.att_date >= today() ? 'style="background:#F7F1E3"' : ""}>
       <td>${fmtD(x.att_date)}</td><td>${esc(x.name)}</td>
       <td><span class="badge ${x.att_type === "연차" ? "b-prog" : x.att_type === "출장" ? "b-go" : "b-warn"}">${esc(x.att_type)}</span></td>
-      <td class="wrap">${esc(x.remark)}</td></tr>`).join("");
+      <td class="wrap">${esc(x.remark)}</td>${canWrite() ? `<td style="white-space:nowrap">${canEditOwn(x.name) ? `<button class="btn sm ghost" onclick="attEdit(${x.id})">수정</button> <button class="btn sm ghost" style="color:var(--danger)" onclick="attDel(${x.id})">삭제</button>` : '<span class="muted">-</span>'}</td>` : ""}</tr>`).join("");
   }
 
   app.innerHTML = `
@@ -1459,7 +1554,7 @@ async function vAttendance() {
   <div class="panel"><h2>월별 집계</h2><div id="att-agg"></div></div>
   <div class="panel"><h2>상세 기록</h2>
   <div class="tbl-wrap" style="max-height:50vh"><table>
-    <thead><tr><th>날짜</th><th>이름</th><th>구분</th><th>비고</th></tr></thead>
+    <thead><tr><th>날짜</th><th>이름</th><th>구분</th><th>비고</th>${canWrite() ? "<th></th>" : ""}</tr></thead>
     <tbody id="att-body"></tbody></table></div></div>`;
   $("#f-a-month").onchange = (e) => { state.month = e.target.value; render(); };
   render();
@@ -1479,10 +1574,32 @@ window.attAdd = function () {
     } catch (_) { return false; }
   }, "등록");
 };
+window.attEdit = function (id) {
+  const x = _att.find(a => a.id === id); if (!x) return;
+  if (!guardEdit(x.name)) return;
+  modal("근태 수정", [
+    `<div class="row">` +
+      fld("날짜", `<input type="date" name="d" value="${x.att_date || ""}" required>`) +
+      fld("이름", selHtml("n", CONFIG.TEAM, x.name)) +
+      fld("구분", selHtml("t", ["연차", "반차", "시차", "출장", "연장근무", "기타"], x.att_type || "연차")) + `</div>`,
+    fld("비고", `<input type="text" name="r" style="width:100%" value="${esc(x.remark || "")}">`),
+  ].join(""), async (f) => {
+    try { await q(sb.from("attendance").update({ att_date: f.get("d"), name: f.get("n"), att_type: f.get("t"), remark: f.get("r") || null }).eq("id", id)); toast("수정 완료"); route(); }
+    catch (_) { return false; }
+  });
+};
+window.attDel = async function (id) {
+  const x = _att.find(a => a.id === id);
+  if (!guardEdit(x?.name)) return;
+  if (!confirm("이 근태 기록을 삭제할까요?")) return;
+  try { await q(sb.from("attendance").delete().eq("id", id)); toast("삭제됨"); route(); } catch (_) {}
+};
 
 /* ══ 건의사항 ══ */
+let _suggs = [];
 async function vSuggest() {
   const rows = await q(sb.from("suggestions").select("*").order("created_at", { ascending: false }));
+  _suggs = rows;
   app.innerHTML = `
   <h1>건의사항</h1><p class="page-sub">팀 운영·업무에 대한 건의를 자유롭게 남겨주세요.</p>
   <div class="panel"><h2>건의 작성</h2>
@@ -1493,7 +1610,7 @@ async function vSuggest() {
   <div class="panel"><h2>건의 목록 (${rows.length})</h2>
     ${rows.map(sg => `<div class="comment">
       <div class="meta"><b>${esc(sg.author)}</b> · ${kstDateTime(sg.created_at)}
-        ${(sg.author === me().name || isMaster()) ? `<button class="btn sm ghost" onclick="suggDel(${sg.id}, '${esc(sg.author)}')">삭제</button>` : ""}</div>
+        ${(sg.author === me().name || isMaster()) ? `<button class="btn sm ghost" onclick="suggEdit(${sg.id})">수정</button> <button class="btn sm ghost" onclick="suggDel(${sg.id}, '${esc(sg.author)}')">삭제</button>` : ""}</div>
       <div class="body">${esc(sg.content)}</div></div>`).join("") || '<p class="muted">아직 건의사항이 없습니다.</p>'}
   </div>`;
   $("#sugg-form").addEventListener("submit", async (e) => {
@@ -1507,6 +1624,15 @@ window.suggDel = async function (id, author) {
   if (!guardEdit(author)) return;
   if (!confirm("건의를 삭제할까요?")) return;
   try { await q(sb.from("suggestions").delete().eq("id", id)); toast("삭제됨"); route(); } catch (_) {}
+};
+window.suggEdit = function (id) {
+  const sg = _suggs.find(x => x.id === id); if (!sg) return;
+  if (!guardEdit(sg.author)) return;
+  modal("건의 수정", fld("내용", `<textarea name="v" required style="min-height:100px">${esc(sg.content)}</textarea>`), async (f) => {
+    const val = (f.get("v") || "").trim(); if (!val) return false;
+    try { await q(sb.from("suggestions").update({ content: val }).eq("id", id)); toast("수정 완료"); route(); }
+    catch (_) { return false; }
+  });
 };
 
 /* ══ 운영 규칙 ══ */
