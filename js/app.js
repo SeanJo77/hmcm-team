@@ -1136,15 +1136,16 @@ window.weekDel = async function (label) {
 window.weekAdd = function () {
   if (!canWrite()) return needLogin();
   // 다음 주차 라벨 자동 제안
-  const d = new Date();
+  const d = new Date(today() + "T00:00:00");
+  const dstr = x => x.getFullYear() + "-" + String(x.getMonth() + 1).padStart(2, "0") + "-" + String(x.getDate()).padStart(2, "0");
   const sug = (d.getMonth() + 1) + "월 " + Math.ceil(d.getDate() / 7) + "주차";
   const mon = new Date(d); mon.setDate(d.getDate() - ((d.getDay() + 6) % 7)); // 이번주 월요일
   const fri = new Date(mon); fri.setDate(mon.getDate() + 4);
   modal("주차 추가", [
     fld("주차 라벨 <span class='req'>*</span>", `<input type="text" name="label" value="${sug}" required placeholder="예: 7월 2주차">`),
     `<div class="row">` +
-      fld("시작일(월)", `<input type="date" name="s" value="${mon.toISOString().slice(0, 10)}" required>`) +
-      fld("종료일(금)", `<input type="date" name="e" value="${fri.toISOString().slice(0, 10)}" required>`) + `</div>`,
+      fld("시작일(월)", `<input type="date" name="s" value="${dstr(mon)}" required>`) +
+      fld("종료일(금)", `<input type="date" name="e" value="${dstr(fri)}" required>`) + `</div>`,
     `<div class="field-hint">추가하면 전 팀원 × DONE/ISSUE/PLAN 빈 칸이 생성되고, 각자 본인 칸을 클릭해 입력합니다.</div>`,
   ].join(""), async (f) => {
     const label = f.get("label").trim();
