@@ -10,7 +10,7 @@ const app = $("#app");
 const esc = (v) => v == null ? "" : String(v)
   .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 const fmtD = (v) => v ? String(v).slice(0, 10) : "";
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Seoul" });
 const pct = (v) => v == null ? "" : Math.round(v * 100) + "%";
 
 function toast(msg, err = false) {
