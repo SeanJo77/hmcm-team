@@ -1546,7 +1546,7 @@ async function vAttendance() {
       </tbody></table>`;
     $("#att-body").innerHTML = f.map(x => `<tr ${x.att_date >= today() ? 'style="background:#F7F1E3"' : ""}>
       <td>${fmtD(x.att_date)}</td><td>${esc(x.name)}</td>
-      <td><span class="badge ${x.att_type === "연차" ? "b-prog" : x.att_type === "출장" ? "b-go" : "b-warn"}">${esc(x.att_type)}</span></td>
+      <td><span class="badge ${x.att_type === "연차" ? "b-prog" : x.att_type === "출장" ? "b-go" : x.att_type === "지각" ? "b-late" : "b-warn"}">${esc(x.att_type)}</span></td>
       <td class="wrap">${esc(x.remark)}</td>${canWrite() ? `<td style="white-space:nowrap">${canEditOwn(x.name) ? `<button class="btn sm ghost" onclick="attEdit(${x.id})">수정</button> <button class="btn sm ghost" style="color:var(--danger)" onclick="attDel(${x.id})">삭제</button>` : '<span class="muted">-</span>'}</td>` : ""}</tr>`).join("");
   }
 
@@ -1570,7 +1570,7 @@ window.attAdd = function () {
     `<div class="row">` +
       fld("날짜", `<input type="date" name="d" value="${today()}" required>`) +
       fld("이름", selHtml("n", CONFIG.TEAM, me().name)) +
-      fld("구분", selHtml("t", ["연차", "반차", "시차", "출장", "연장근무", "기타"], "연차")) + `</div>`,
+      fld("구분", selHtml("t", ["연차", "반차", "시차", "출장", "연장근무", "지각", "기타"], "연차")) + `</div>`,
     fld("비고", `<input type="text" name="r" style="width:100%" placeholder="예: 8/18~21 (총 4일)">`),
   ].join(""), async (f) => {
     try {
@@ -1586,7 +1586,7 @@ window.attEdit = function (id) {
     `<div class="row">` +
       fld("날짜", `<input type="date" name="d" value="${x.att_date || ""}" required>`) +
       fld("이름", selHtml("n", CONFIG.TEAM, x.name)) +
-      fld("구분", selHtml("t", ["연차", "반차", "시차", "출장", "연장근무", "기타"], x.att_type || "연차")) + `</div>`,
+      fld("구분", selHtml("t", ["연차", "반차", "시차", "출장", "연장근무", "지각", "기타"], x.att_type || "연차")) + `</div>`,
     fld("비고", `<input type="text" name="r" style="width:100%" value="${esc(x.remark || "")}">`),
   ].join(""), async (f) => {
     try { await q(sb.from("attendance").update({ att_date: f.get("d"), name: f.get("n"), att_type: f.get("t"), remark: f.get("r") || null }).eq("id", id)); toast("수정 완료"); route(); }
