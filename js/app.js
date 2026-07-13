@@ -173,8 +173,10 @@ function modal(title, bodyHtml, onSubmit, submitLabel = "저장") {
       ${onSubmit ? `<div class="row" style="margin-top:14px;margin-bottom:0"><button class="btn" type="submit">${submitLabel}</button></div>` : ""}
     </form></div>`;
   document.body.appendChild(wrap);
+  let _mdTarget = null;
+  wrap.addEventListener("mousedown", (e) => { _mdTarget = e.target; });
   wrap.addEventListener("click", (e) => {
-    if (e.target === wrap || e.target.hasAttribute("data-x")) wrap.remove();
+    if (e.target.hasAttribute("data-x") || (e.target === wrap && _mdTarget === wrap)) wrap.remove();
   });
   if (onSubmit) $("#modal-form", wrap).addEventListener("submit", async (e) => {
     e.preventDefault();
