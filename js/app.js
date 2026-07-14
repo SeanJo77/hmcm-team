@@ -965,7 +965,12 @@ window.issueClose = async function (id) {
   const xc = _issueCache && _issueCache.id === id ? _issueCache : null;
   if (!guardEdit(xc?.assignee)) return;
   if (!confirm("이 이슈를 완료 처리할까요?")) return;
-  try { await q(sb.from("wbs_issues").update({ status: "완료" }).eq("id", id)); toast("완료 처리됨"); vIssueDetail(id); } catch (_) {}
+  try {
+    await q(sb.from("wbs_issues").update({ status: "완료" }).eq("id", id));
+    const notified = xc && xc.assignee && xc.assignee !== me().name;
+    if (notified) await notify(xc.assignee, `${me().name}님이 '${(xc.agenda || xc.question || "이슈").slice(0, 30)}' 이슈를 완료 처리했습니다.`, `#/issues/${id}`, "issue_closed");
+    toast("완료 처리됨" + (notified ? " · 알림 발송" : "")); vIssueDetail(id);
+  } catch (_) {}
 };
 
 async function vIssueNew() {
