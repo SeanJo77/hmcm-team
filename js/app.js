@@ -197,8 +197,8 @@ function issueClosed(x) {
 function issueStatusBadge(x) {
   if (x.request_go === "Cancel" && !x.status) return '<span class="badge b-gray">완료(취소)</span>';
   if (!x.status) return '<span class="badge b-late">미해결</span>';
-  const m = { "완료": "b-done", "미해결": "b-late", "보류": "b-warn", "공지": "b-gray", "진행중": "b-prog" };
-  return `<span class="badge ${m[x.status] || "b-prog"}">${esc(x.status)}</span>`;
+  const m = { "완료": "b-closed", "미해결": "b-late", "보류": "b-warn", "공지": "b-gray", "진행중": "b-open" };
+  return `<span class="badge ${m[x.status] || "b-open"}">${esc(x.status)}</span>`;
 }
 function goBadge(g) {
   if (!g) return '<span class="badge b-gray">대기</span>';
