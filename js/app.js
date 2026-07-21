@@ -668,6 +668,7 @@ window.calEdit = function (id) {
 
 /* ══ WBS 진행 현황 ══ */
 let _tasks = [], _wbsMenus = [];
+let _taskFilter = { assignee: "", status: "" }; /* 수정/삭제 후 route() 재실행 시에도 필터 유지 */
 async function vTasks() {
   const [tasks, codes] = await Promise.all([
     q(sb.from("wbs_tasks").select("*").order("id")),
@@ -675,7 +676,7 @@ async function vTasks() {
   ]);
   _tasks = tasks;
   _wbsMenus = [...new Set([...codes.map(c => c.code), ...tasks.map(t => t.lv3_menu).filter(Boolean)])].sort();
-  const state = { assignee: "", status: "" };
+  const state = _taskFilter;
 
   function filtered() {
     let rows = tasks;
@@ -765,9 +766,9 @@ async function vTasks() {
   <h1>WBS 진행 현황</h1>
   <p class="page-sub">WBS(Lv3) 그룹별 접기 + 간트 타임라인. Start·End(plan)는 최초 입력 후 수정 불가, 완료 시 End(real) 필수 (시스템 강제)</p>
   <div class="row">
-    ${sel("assignee", CONFIG.TEAM, "", "담당자 전체")}
-    <select id="f-status"><option value="">상태 전체</option><option value="open">진행중</option>
-      <option value="late">기한 경과</option><option value="holding">Holding</option><option value="done">완료</option></select>
+    ${sel("assignee", CONFIG.TEAM, state.assignee, "담당자 전체")}
+    <select id="f-status"><option value="">상태 전체</option><option value="open"${state.status === "open" ? " selected" : ""}>진행중</option>
+      <option value="late"${state.status === "late" ? " selected" : ""}>기한 경과</option><option value="holding"${state.status === "holding" ? " selected" : ""}>Holding</option><option value="done"${state.status === "done" ? " selected" : ""}>완료</option></select>
     <button class="btn sm ghost" id="btn-fold">모두 접기</button>
     <button class="btn sm ghost" id="btn-unfold">모두 펼치기</button>
     <span class="muted" id="task-count"></span>
