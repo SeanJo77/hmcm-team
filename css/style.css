@@ -72,6 +72,9 @@ td.wrap { white-space: pre-wrap; word-break: break-word; max-width: 340px; }
 .b-late { background: #F6D3C2; color: #B3400F; }
 .b-gray { background: #EFECE4; color: #6E675C; }
 .b-go { background: #EAE6DC; color: #474235; }
+/* v11: 이슈 상태 시인성 — 진행중(파랑 채움) vs 완료(진한 녹색 채움) 명확 구분 */
+.b-open { background: #2563EB; color: #fff; }
+.b-closed { background: #1F524B; color: #fff; }
 
 /* buttons & forms */
 .btn { padding: 8px 14px; border: none; border-radius: 8px; background: var(--accent); color: #fff;
