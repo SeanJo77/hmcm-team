@@ -44,6 +44,8 @@ window.changePw = function () {
 const isMaster = () => me()?.role === "master";
 /* 주간 업무 요약 대상: 팀장(master) 제외한 팀원 (강지영~이민지 5명) */
 const WEEKLY_MEMBERS = CONFIG.TEAM.filter(m => !Object.values(CONFIG.USERS).some(u => u.name === m && u.role === "master"));
+/* 퇴사자 등 UI 미표기 대상. DB는 유지, 화면 목록/집계에서만 제외 */
+const isHidden = (name) => (CONFIG.HIDDEN || []).includes(name);
 const hhmm = (ts) => {
   if (!ts) return "";
   const d = new Date(ts);
@@ -525,14 +527,16 @@ async function vDashboard() {
   try { calEvents = await q(sb.from("calendar_events").select("*").gte("event_date", iso(startMon)).lte("event_date", iso(endSun)).order("id")); } catch (_) {}
   _notices = notices; _calEvents = calEvents;
 
+  const tasksV = tasks.filter(x => !isHidden(x.assignee)); /* 퇴사자 제외 (과업·근태). 이슈는 유지 */
+  const attV = att.filter(x => !isHidden(x.name));
   const cmtCount = {};
   for (const c of cmts) cmtCount[c.target_id] = (cmtCount[c.target_id] || 0) + 1;
-  const openTasks = tasks.filter(x => (x.progress ?? 0) < 1)
+  const openTasks = tasksV.filter(x => (x.progress ?? 0) < 1)
     .sort((a, b) => (a.end_plan || "9999").localeCompare(b.end_plan || "9999"));
   const late = openTasks.filter(x => x.end_plan && x.end_plan < t);
   const openIssues = issues.filter(x => !issueClosed(x))
     .sort((a, b) => (b.issue_date || "").localeCompare(a.issue_date || ""));
-  const avg = tasks.length ? tasks.reduce((s, x) => s + (x.progress ?? 0), 0) / tasks.length : 0;
+  const avg = tasksV.length ? tasksV.reduce((s, x) => s + (x.progress ?? 0), 0) / tasksV.length : 0;
 
   // 주 달력 (지난주·이번주·다음주 3주)
   const evBy = {};
@@ -589,9 +593,9 @@ async function vDashboard() {
     </tbody></table></div>` : '<p class="muted">모든 이슈가 완료되었습니다.</p>'}
   </div>
 
-  <div class="panel">${att.length ? `
+  <div class="panel">${attV.length ? `
     <table><thead><tr><th>날짜</th><th>이름</th><th>구분</th><th>비고</th></tr></thead><tbody>
-    ${att.map(x => `<tr><td>${fmtD(x.att_date)}</td><td>${esc(x.name)}</td>
+    ${attV.map(x => `<tr><td>${fmtD(x.att_date)}</td><td>${esc(x.name)}</td>
       <td><span class="badge b-warn">${esc(x.att_type)}</span></td><td>${esc(x.remark)}</td></tr>`).join("")}
     </tbody></table>` : '<p class="muted">예정 없음</p>'}
   </div>
@@ -674,12 +678,12 @@ async function vTasks() {
     q(sb.from("wbs_tasks").select("*").order("id")),
     q(sb.from("wbs_codes").select("code").order("code")),
   ]);
-  _tasks = tasks;
+  _tasks = tasks.filter(t => !isHidden(t.assignee)); /* 퇴사자 과업 UI 제외 */
   _wbsMenus = [...new Set([...codes.map(c => c.code), ...tasks.map(t => t.lv3_menu).filter(Boolean)])].sort();
   const state = _taskFilter;
 
   function filtered() {
-    let rows = tasks;
+    let rows = _tasks;
     if (state.assignee) rows = rows.filter(x => x.assignee === state.assignee);
     if (state.status === "done") rows = rows.filter(x => (x.progress ?? 0) >= 1);
     if (state.status === "open") rows = rows.filter(x => (x.progress ?? 0) < 1);
@@ -1426,6 +1430,7 @@ async function vDaily() {
   for (const r of rows) {
     if (r.log_date) r.week_label = weekOfMonthLabel(r.log_date);   // 저장값 무시하고 월요일 기준으로 통일
   }
+  rows = rows.filter(r => !isHidden(r.member)); /* 퇴사자 일일 기록 UI 제외 */
   const ORD = (m) => { const i = CONFIG.TEAM.indexOf(m); return i < 0 ? 99 : i; };
   const state = { member: "", month: "" };
   const months = [...new Set(rows.map(r => (r.log_date || "").slice(0, 7)))].sort().reverse();
@@ -1737,7 +1742,7 @@ window.docDel = async function (name) {
 /* ══ 근태 ══ */
 let _att = [];
 async function vAttendance() {
-  const rows = await q(sb.from("attendance").select("*").order("att_date", { ascending: false }));
+  const rows = (await q(sb.from("attendance").select("*").order("att_date", { ascending: false }))).filter(r => !isHidden(r.name)); /* 퇴사자 근태 UI 제외 */
   _att = rows;
   const months = [...new Set(rows.map(r => (r.att_date || "").slice(0, 7)))].filter(Boolean).sort().reverse();
   const curMon = today().slice(0, 7);
