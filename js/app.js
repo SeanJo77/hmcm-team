@@ -46,9 +46,16 @@ const isMaster = () => me()?.role === "master";
 const WEEKLY_MEMBERS = CONFIG.TEAM.filter(m => !Object.values(CONFIG.USERS).some(u => u.name === m && u.role === "master"));
 /* 퇴사자 등 UI 미표기 대상. DB는 유지, 화면 목록/집계에서만 제외 */
 const isHidden = (name) => (CONFIG.HIDDEN || []).includes(name);
+/* Supabase가 타임존 표기 없이 반환하는 timestamp(=UTC 벽시계)를 UTC로 해석.
+   표기가 이미 있으면(Z 또는 ±HH:MM) 그대로 사용 → 이중 변환 방지 */
+const parseTS = (ts) => {
+  const s = String(ts);
+  const norm = /[Zz]$|[+\-]\d\d:?\d\d$/.test(s) ? s : s.replace(" ", "T") + "Z";
+  return new Date(norm);
+};
 const hhmm = (ts) => {
   if (!ts) return "";
-  const d = new Date(ts);
+  const d = parseTS(ts);
   if (isNaN(d)) return String(ts).slice(11, 16);
   return d.toLocaleTimeString("ko-KR", { timeZone: "Asia/Seoul", hour: "2-digit", minute: "2-digit", hour12: false });
 };
@@ -72,7 +79,7 @@ function weekOfMonthLabel(dateStr) {
 /* KST 날짜+시간 "YYYY-MM-DD HH:MM" */
 const kstDateTime = (ts) => {
   if (!ts) return "";
-  const d = new Date(ts);
+  const d = parseTS(ts);
   if (isNaN(d)) return String(ts).slice(0, 16).replace("T", " ");
   return d.toLocaleDateString("sv-SE", { timeZone: "Asia/Seoul" }) + " " + hhmm(ts);
 };
@@ -1064,7 +1071,7 @@ async function vIssueDetail(id) {
   </div>
   <div class="panel" style="margin-top:18px"><h2>댓글 ${comments.length ? `(${comments.length})` : ""}</h2>
     <div id="cmt-list">${comments.map(c => `<div class="comment">
-      <div class="meta"><b>${esc(c.author)}</b>${c.mention ? ` → @${esc(c.mention)}` : ""} · ${String(c.created_at).slice(0, 16).replace("T", " ")}
+      <div class="meta"><b>${esc(c.author)}</b>${c.mention ? ` → @${esc(c.mention)}` : ""} · ${kstDateTime(c.created_at)}
         ${canWrite() && (c.author === me().name || isMaster()) ? `<button class="btn sm ghost" onclick="cmtEdit(${c.id}, ${id})">수정</button> <button class="btn sm ghost" onclick="cmtDel(${c.id}, ${id}, '${esc(c.author)}')">삭제</button>` : ""}</div>
       <div class="body">${esc(c.content)}</div></div>`).join("") || '<p class="muted">댓글 없음</p>'}
     </div>
