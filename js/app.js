@@ -197,13 +197,48 @@ async function loadClaudeUsage() {
   if (!r) { el.classList.add("hidden"); el.innerHTML = ""; return; }
   const sp = Math.round(r.session_pct ?? 0), wp = Math.round(r.weekly_pct ?? 0);
   el.classList.remove("hidden");
-  el.innerHTML = `<div class="cu-box">
+  el.innerHTML = `<div class="cu-box" onclick="openClaudeUsageModal()" title="클릭하면 사용량 추이를 볼 수 있습니다">
     <div class="cu-title">Claude Usage (Max 5x)</div>
     <div class="cu-line">세션 : ${sp}% (${cuRemain(r.session_reset_at)})</div>
     <div class="cu-line">주간 : ${wp}% (${cuWeeklyReset(r.weekly_reset_at)})</div>
     <div class="cu-time">${kstDateTime(r.captured_at)} 기준</div>
   </div>`;
 }
+
+/* Claude 사용량 추이 모달 — 세션/주간 % 그래프 + 초과 횟수 */
+const CU_SESSION_ALERT_PCT = 95;  // 세션 사용량 경고 기준 (추후 조정 가능한 설정으로 확장 예정)
+const CU_WEEKLY_ALERT_PCT = 99;   // 주간 사용량 경고 기준
+let _cuChart = null;
+window.openClaudeUsageModal = async function () {
+  const rows = await q(sb.from("claude_usage").select("captured_at,session_pct,weekly_pct").order("captured_at", { ascending: false }).limit(500));
+  rows.reverse();
+  const sessionOver = rows.filter(r => (r.session_pct ?? 0) > CU_SESSION_ALERT_PCT).length;
+  const weeklyOver = rows.filter(r => (r.weekly_pct ?? 0) > CU_WEEKLY_ALERT_PCT).length;
+  const body = `
+    <div class="cu-modal-stats">
+      <div class="cu-stat"><b>${sessionOver}</b>회<span>세션 ${CU_SESSION_ALERT_PCT}% 초과</span></div>
+      <div class="cu-stat"><b>${weeklyOver}</b>회<span>주간 ${CU_WEEKLY_ALERT_PCT}% 초과</span></div>
+    </div>
+    <canvas id="cu-chart" height="220"></canvas>`;
+  const wrap = modal("Claude 사용량 추이", body, null);
+  if (_cuChart) { _cuChart.destroy(); _cuChart = null; }
+  if (!rows.length) return;
+  _cuChart = new Chart($("#cu-chart", wrap), {
+    type: "line",
+    data: {
+      labels: rows.map(r => kstDateTime(r.captured_at)),
+      datasets: [
+        { label: "세션 %", data: rows.map(r => r.session_pct), borderColor: "#1F524B", backgroundColor: "transparent", tension: .2, pointRadius: 0 },
+        { label: "주간 %", data: rows.map(r => r.weekly_pct), borderColor: "#D05C26", backgroundColor: "transparent", tension: .2, pointRadius: 0 },
+      ],
+    },
+    options: {
+      responsive: true,
+      scales: { y: { min: 0, max: 100, ticks: { callback: (v) => v + "%" } }, x: { ticks: { maxTicksLimit: 8 } } },
+      plugins: { legend: { position: "bottom" } },
+    },
+  });
+};
 
 /* 범용 모달 */
 function modal(title, bodyHtml, onSubmit, submitLabel = "저장") {
