@@ -172,37 +172,66 @@ function renderPresence() {
 }
 
 /* ── Claude 사용량 위젯 (예약작업이 주기적으로 갱신) ─── */
-/* 세션 재설정까지 남은 시간 — "N시간 M분 후 재설정" */
-function cuRemain(ts) {
-  if (!ts) return "";
-  const target = parseTS(ts);
-  if (isNaN(target)) return "";
-  const diff = target - new Date();
-  if (diff <= 0) return "재설정됨";
-  const h = Math.floor(diff / 3600000), m = Math.floor((diff % 3600000) / 60000);
-  return `${h}시간 ${m}분 후 재설정`;
+/* 주간 재설정까지 남은 시간 — "0d 16h 53m" */
+function cuFmtWeekly(ts) {
+  if (!ts) return "-";
+  const diff = parseTS(ts) - new Date();
+  if (isNaN(diff)) return "-";
+  if (diff <= 0) return "0d 0h 0m";
+  const totalMin = Math.floor(diff / 60000);
+  const d = Math.floor(totalMin / 1440), h = Math.floor((totalMin % 1440) / 60), m = totalMin % 60;
+  return `${d}d ${h}h ${m}m`;
 }
-/* 주간 재설정 시점 — "목 00:59 에 재설정" */
-function cuWeeklyReset(ts) {
-  if (!ts) return "";
-  const d = parseTS(ts);
-  if (isNaN(d)) return "";
-  const wd = d.toLocaleDateString("ko-KR", { timeZone: "Asia/Seoul", weekday: "short" });
-  return `${wd} ${hhmm(ts)} 에 재설정`;
+/* 세션 재설정까지 남은 시간 — "1:33:41" */
+function cuFmtSession(ts) {
+  if (!ts) return "-";
+  const diff = parseTS(ts) - new Date();
+  if (isNaN(diff)) return "-";
+  if (diff <= 0) return "0:00:00";
+  const totalSec = Math.floor(diff / 1000);
+  const h = Math.floor(totalSec / 3600), m = Math.floor((totalSec % 3600) / 60), s = totalSec % 60;
+  return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
-async function loadClaudeUsage() {
+/* 원형 진행률 링 SVG */
+function cuRing(pct, color) {
+  const r = 26, c = 2 * Math.PI * r;
+  const p = Math.max(0, Math.min(100, pct ?? 0));
+  return `<svg viewBox="0 0 64 64" class="cu-ring">
+    <circle cx="32" cy="32" r="${r}" class="cu-ring-bg"></circle>
+    <circle cx="32" cy="32" r="${r}" class="cu-ring-fg" stroke="${color}" stroke-dasharray="${c}" stroke-dashoffset="${c * (1 - p / 100)}"></circle>
+  </svg>`;
+}
+let _cuLatest = null;
+function renderCuCards() {
   const el = $("#claude-usage"); if (!el) return;
-  const { data, error } = await sb.from("claude_usage").select("*").order("captured_at", { ascending: false }).limit(1);
-  const r = !error && data && data[0];
+  const r = _cuLatest;
   if (!r) { el.classList.add("hidden"); el.innerHTML = ""; return; }
   const sp = Math.round(r.session_pct ?? 0), wp = Math.round(r.weekly_pct ?? 0);
   el.classList.remove("hidden");
-  el.innerHTML = `<div class="cu-box" onclick="openClaudeUsageModal()" title="클릭하면 사용량 추이를 볼 수 있습니다">
-    <div class="cu-title">Claude Usage (Max 5x)</div>
-    <div class="cu-line">세션 : ${sp}% (${cuRemain(r.session_reset_at)})</div>
-    <div class="cu-line">주간 : ${wp}% (${cuWeeklyReset(r.weekly_reset_at)})</div>
-    <div class="cu-time">${kstDateTime(r.captured_at)} 기준</div>
-  </div>`;
+  el.innerHTML = `<div class="cu-cards" onclick="openClaudeUsageModal()" title="클릭하면 사용량 추이를 볼 수 있습니다">
+    <div class="cu-card">
+      <div class="cu-ring-wrap">${cuRing(sp, "#F0862E")}<div class="cu-ring-label"><b>${sp}</b><span>%</span></div></div>
+      <div class="cu-card-lbl">Session (5h)</div>
+      <div class="cu-card-val" id="cu-session-time">${cuFmtSession(r.session_reset_at)}</div>
+    </div>
+    <div class="cu-card">
+      <div class="cu-ring-wrap">${cuRing(wp, "#E8C23D")}<div class="cu-ring-label"><b>${wp}</b><span>%</span></div></div>
+      <div class="cu-card-lbl">This week</div>
+      <div class="cu-card-val" id="cu-weekly-time">${cuFmtWeekly(r.weekly_reset_at)}</div>
+    </div>
+  </div>
+  <div class="cu-time">${kstDateTime(r.captured_at)} 기준</div>`;
+}
+async function loadClaudeUsage() {
+  const { data, error } = await sb.from("claude_usage").select("*").order("captured_at", { ascending: false }).limit(1);
+  _cuLatest = (!error && data && data[0]) || null;
+  renderCuCards();
+}
+/* 1초마다 카운트다운 텍스트만 갱신 (링·%는 다음 캡쳐까지 고정) */
+function tickCuCountdown() {
+  if (!_cuLatest) return;
+  const st = $("#cu-session-time"); if (st) st.textContent = cuFmtSession(_cuLatest.session_reset_at);
+  const wt = $("#cu-weekly-time"); if (wt) wt.textContent = cuFmtWeekly(_cuLatest.weekly_reset_at);
 }
 
 /* Claude 사용량 추이 모달 — 세션/주간 % 그래프 + 초과 횟수 */
@@ -1976,3 +2005,4 @@ window.addEventListener("hashchange", route);
 initAuth().then(route);
 loadClaudeUsage();
 setInterval(loadClaudeUsage, 5 * 60 * 1000);
+setInterval(tickCuCountdown, 1000);
