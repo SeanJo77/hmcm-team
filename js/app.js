@@ -171,6 +171,21 @@ function renderPresence() {
   }).join("")}</div>`;
 }
 
+/* ── Claude 사용량 위젯 (예약작업이 주기적으로 갱신) ─── */
+async function loadClaudeUsage() {
+  const el = $("#claude-usage"); if (!el) return;
+  const { data, error } = await sb.from("claude_usage").select("*").order("captured_at", { ascending: false }).limit(1);
+  const r = !error && data && data[0];
+  if (!r) { el.classList.add("hidden"); el.innerHTML = ""; return; }
+  const sp = Math.round(r.session_pct ?? 0), wp = Math.round(r.weekly_pct ?? 0);
+  el.classList.remove("hidden");
+  el.innerHTML = `<div class="cu-box" title="Claude Max 플랜 사용량 · ${kstDateTime(r.captured_at)} 기준">
+    <div class="cu-row"><span class="cu-lbl">세션</span><span class="cu-bar"><span class="cu-fill" style="width:${Math.min(100, sp)}%"></span></span><span class="cu-pct">${sp}%</span></div>
+    <div class="cu-row"><span class="cu-lbl">주간</span><span class="cu-bar"><span class="cu-fill" style="width:${Math.min(100, wp)}%"></span></span><span class="cu-pct">${wp}%</span></div>
+    <div class="cu-time">${kstDateTime(r.captured_at)} 기준</div>
+  </div>`;
+}
+
 /* 범용 모달 */
 function modal(title, bodyHtml, onSubmit, submitLabel = "저장") {
   const wrap = document.createElement("div");
@@ -1905,3 +1920,5 @@ window.noteDel = async function (id) {
 /* ── boot ─────────────────────────────────────── */
 window.addEventListener("hashchange", route);
 initAuth().then(route);
+loadClaudeUsage();
+setInterval(loadClaudeUsage, 5 * 60 * 1000);
