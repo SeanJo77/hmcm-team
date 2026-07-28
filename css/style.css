@@ -325,7 +325,7 @@ details.dash-tasks[open] > summary::before { transform: rotate(90deg); }
 .cu-ring { width: 56px; height: 56px; transform: rotate(-90deg); }
 .cu-ring-bg { fill: none; stroke: #4A4436; stroke-width: 6; }
 .cu-ring-fg { fill: none; stroke-width: 6; stroke-linecap: round; transition: stroke-dashoffset .4s; }
-.cu-ring-label { position: absolute; inset: 0; display: flex; align-items: baseline; justify-content: center; gap: 1px; }
+.cu-ring-label { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 1px; }
 .cu-ring-label b { color: #EDE9E0; font-size: 15px; font-weight: 800; }
 .cu-ring-label span { color: #8C8577; font-size: 8px; }
 .cu-card-lbl { color: #A79E8E; font-size: 9.5px; margin-top: 2px; }
