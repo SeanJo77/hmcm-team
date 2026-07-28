@@ -318,8 +318,15 @@ details.dash-tasks[open] > summary::before { transform: rotate(90deg); }
 
 /* v12: Claude 사용량 위젯 (예약작업이 주기적으로 갱신) */
 #claude-usage { margin-bottom: 10px; }
-.cu-box { background: #39342B; border: 1px solid #4A4436; border-radius: 7px; padding: 8px 10px; font-size: 11px; }
+.cu-box { background: #39342B; border: 1px solid #4A4436; border-radius: 7px; padding: 8px 10px; font-size: 11px; cursor: pointer; }
+.cu-box:hover { background: #423C31; border-color: #625A49; }
 .cu-title { color: #EDE9E0; font-weight: 700; margin-bottom: 4px; }
 .cu-line { color: #D8D2C6; margin-bottom: 2px; }
 .cu-time { color: #8C8577; font-size: 10px; text-align: right; margin-top: 2px; }
+
+/* v13: Claude 사용량 추이 모달 */
+.cu-modal-stats { display: flex; gap: 10px; margin-bottom: 14px; }
+.cu-stat { flex: 1; background: #F7F5F0; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; text-align: center; }
+.cu-stat b { display: block; font-size: 22px; color: var(--accent); }
+.cu-stat span { font-size: 12px; color: var(--sub); }
 .task-lc
