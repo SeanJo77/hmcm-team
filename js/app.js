@@ -182,13 +182,13 @@ function cuRemain(ts) {
   const h = Math.floor(diff / 3600000), m = Math.floor((diff % 3600000) / 60000);
   return `${h}시간 ${m}분 후 재설정`;
 }
-/* 주간 재설정 시점 — "목 00:59 재설정" */
+/* 주간 재설정 시점 — "목 00:59 에 재설정" */
 function cuWeeklyReset(ts) {
   if (!ts) return "";
   const d = parseTS(ts);
   if (isNaN(d)) return "";
   const wd = d.toLocaleDateString("ko-KR", { timeZone: "Asia/Seoul", weekday: "short" });
-  return `${wd} ${hhmm(ts)} 재설정`;
+  return `${wd} ${hhmm(ts)} 에 재설정`;
 }
 async function loadClaudeUsage() {
   const el = $("#claude-usage"); if (!el) return;
@@ -197,11 +197,10 @@ async function loadClaudeUsage() {
   if (!r) { el.classList.add("hidden"); el.innerHTML = ""; return; }
   const sp = Math.round(r.session_pct ?? 0), wp = Math.round(r.weekly_pct ?? 0);
   el.classList.remove("hidden");
-  el.innerHTML = `<div class="cu-box" title="Claude Max 플랜 사용량 · ${kstDateTime(r.captured_at)} 기준">
-    <div class="cu-row"><span class="cu-lbl">세션</span><span class="cu-bar"><span class="cu-fill" style="width:${Math.min(100, sp)}%"></span></span><span class="cu-pct">${sp}%</span></div>
-    <div class="cu-reset">${cuRemain(r.session_reset_at)}</div>
-    <div class="cu-row"><span class="cu-lbl">주간</span><span class="cu-bar"><span class="cu-fill" style="width:${Math.min(100, wp)}%"></span></span><span class="cu-pct">${wp}%</span></div>
-    <div class="cu-reset">${cuWeeklyReset(r.weekly_reset_at)}</div>
+  el.innerHTML = `<div class="cu-box">
+    <div class="cu-title">Claude Usage (Max 5x)</div>
+    <div class="cu-line">세션 : ${sp}% (${cuRemain(r.session_reset_at)})</div>
+    <div class="cu-line">주간 : ${wp}% (${cuWeeklyReset(r.weekly_reset_at)})</div>
     <div class="cu-time">${kstDateTime(r.captured_at)} 기준</div>
   </div>`;
 }
