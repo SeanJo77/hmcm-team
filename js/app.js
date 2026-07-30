@@ -394,12 +394,12 @@ window.openClaudeUsageModal = async function () {
 
   const body = `
     <div class="cu-modal-stats">
-      <div class="cu-stat"><b>${segs.length}</b>개<span>기록된 세션</span></div>
-      <div class="cu-stat"><b>${sessionOver}</b>회<span>세션 ${CU_SESSION_ALERT_PCT}% 초과</span></div>
-      <div class="cu-stat"><b>${weeklyOver}</b>회<span>주간 ${CU_WEEKLY_ALERT_PCT}% 초과</span></div>
-      <div class="cu-stat"><b>${nz(R.wRemain)}%</b><span>주간 잔여</span></div>
-      <div class="cu-stat"><b>${R.nSessions ?? "-"}</b>회<span>재설정까지 남은 세션</span></div>
-      <div class="cu-stat cu-stat-hi"><b>${R.reco == null ? "-" : nz(R.reco) + "%"}</b><span>세션별 추천 사용량</span></div>
+      <div class="cu-stat"><b>${segs.length}<i>개</i></b><span>기록된 세션</span></div>
+      <div class="cu-stat"><b>${sessionOver}<i>회</i></b><span>세션 ${CU_SESSION_ALERT_PCT}% 초과</span></div>
+      <div class="cu-stat"><b>${weeklyOver}<i>회</i></b><span>주간 ${CU_WEEKLY_ALERT_PCT}% 초과</span></div>
+      <div class="cu-stat"><b>${nz(R.wRemain)}<i>%</i></b><span>주간 잔여</span></div>
+      <div class="cu-stat"><b>${R.nSessions ?? "-"}<i>회</i></b><span>재설정까지 남은 세션</span></div>
+      <div class="cu-stat cu-stat-hi"><b>${R.reco == null ? "-" : nz(R.reco) + "<i>%</i>"}</b><span>세션별 추천 사용량</span></div>
     </div>
     <div class="cu-chart-wrap"><canvas id="cu-chart"></canvas></div>
     <div class="cu-legend">
