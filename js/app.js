@@ -234,38 +234,256 @@ function tickCuCountdown() {
   const wt = $("#cu-weekly-time"); if (wt) wt.textContent = cuFmtWeekly(_cuLatest.weekly_reset_at);
 }
 
-/* Claude 사용량 추이 모달 — 세션/주간 % 그래프 + 초과 횟수 */
-const CU_SESSION_ALERT_PCT = 95;  // 세션 사용량 경고 기준 (추후 조정 가능한 설정으로 확장 예정)
-const CU_WEEKLY_ALERT_PCT = 99;   // 주간 사용량 경고 기준
+/* ── Claude 사용량 추이 모달 ──────────────────────────────────────────
+   · x축: 시간(선형 스케일). 날짜가 바뀌는 눈금만 날짜, 나머지는 시각만 표기
+   · 측정 시점마다 dot 표기 → 호버 시 KST 측정시각 + 세션/주간 % 동시 표기
+   · 세션(5시간 롤링 윈도우) 시작·종료 지점에 수직 구분선 + 교대 음영
+   · 주간 한도 내에서 소진하기 위한 '세션별 추천 사용량' 기준선          */
+const CU_SESSION_ALERT_PCT = 95;   // 세션 사용량 경고 기준 (추후 조정 가능한 설정으로 확장 예정)
+const CU_WEEKLY_ALERT_PCT = 99;    // 주간 사용량 경고 기준
+const CU_SESSION_HOURS = 5;        // 세션(롤링 윈도우) 길이 (시간)
+const CU_ACTIVE_FROM = 7;          // 하루 활동 시작 시각 (KST) — 남은 세션 수 추정용
+const CU_ACTIVE_TO = 22;           // 하루 활동 종료 시각 (KST)
+const CU_COLOR = { session: "#1F524B", weekly: "#D05C26", reco: "#8A6D1F", bound: "#9A9081" };
+const H_MS = 3600000, D_MS = 86400000, KST_OFF = 9 * H_MS;
 let _cuChart = null;
+
+/* KST 포맷터 (ms 타임스탬프 입력) */
+const cuKstDate = (ms) => new Date(ms).toLocaleDateString("sv-SE", { timeZone: "Asia/Seoul" });           // 2026-07-29
+const cuKstTime = (ms) => new Date(ms).toLocaleTimeString("en-GB", { timeZone: "Asia/Seoul", hour: "2-digit", minute: "2-digit", hour12: false }); // 14:34
+const cuKstMD = (ms) => cuKstDate(ms).slice(5).replace("-", ".");                                          // 07.29
+const cuStamp = (ms) => `${cuKstDate(ms).slice(2).replace(/-/g, ".")}. ${cuKstTime(ms)}`;                  // 26.07.29. 14:34
+
+/* 세션 분할 — session_reset_at(세션 종료 절대시각)이 크게 바뀌면 새 세션.
+   reset 값이 없는 구간은 세션 % 급감(리셋 신호)으로 보조 판정. */
+function cuSplitSessions(rows) {
+  const segs = [];
+  let cur = null;
+  for (const r of rows) {
+    const t = parseTS(r.captured_at).getTime();
+    if (isNaN(t)) continue;
+    const reset = r.session_reset_at ? parseTS(r.session_reset_at).getTime() : null;
+    const pct = r.session_pct ?? 0;
+    const isNew = !cur
+      || (reset != null && cur.reset != null && Math.abs(reset - cur.reset) > 20 * 60000)
+      || (cur.reset != null && pct < cur.lastPct - 5)               // 리셋되어 % 가 떨어짐
+      || (cur.reset == null && reset == null && pct < cur.lastPct - 5)
+      || (t - cur.end > CU_SESSION_HOURS * H_MS);                  // 캡처 공백이 세션 길이 초과
+    if (isNew) { cur = { start: t, end: t, reset, rows: [r], lastPct: pct }; segs.push(cur); }
+    else { cur.end = t; cur.rows.push(r); if (reset != null) cur.reset = reset; cur.lastPct = pct; }
+  }
+  /* 세션 종료 지점: reset 시각이 있으면 그 값, 없으면 마지막 캡처 + 잔여 추정 */
+  segs.forEach((s, i) => {
+    const next = segs[i + 1];
+    s.close = s.reset != null ? s.reset : Math.min(s.start + CU_SESSION_HOURS * H_MS, next ? next.start : s.end);
+    if (next && s.close > next.start) s.close = next.start;        // 다음 세션 시작을 넘지 않게
+    s.no = i + 1;
+    const sp = s.rows.map(r => r.session_pct ?? 0);
+    s.peak = Math.max(...sp);
+  });
+  return segs;
+}
+
+/* 활동 시간대(07~22시 KST)만 계산한 잔여 시간 — 남은 세션 수 추정용 */
+function cuActiveHours(from, to) {
+  if (!(to > from)) return 0;
+  let total = 0;
+  const first = Math.floor((from + KST_OFF) / D_MS) * D_MS - KST_OFF;   // from이 속한 KST 자정
+  for (let d = first; d < to && d < first + 21 * D_MS; d += D_MS) {
+    const a = Math.max(d + CU_ACTIVE_FROM * H_MS, from);
+    const b = Math.min(d + CU_ACTIVE_TO * H_MS, to);
+    if (b > a) total += (b - a) / H_MS;
+  }
+  return total;
+}
+
+/* 세션별 추천 사용량 — 주간 잔여량을 남은 세션 수로 나눈 뒤,
+   실측 데이터에서 구한 환산계수 k(= 세션 1%p 소비 시 주간 소비 %p)로 세션 % 로 변환 */
+function cuRecommend(segs, latest) {
+  const now = Date.now();
+  const wRemain = Math.max(0, 100 - (latest.weekly_pct ?? 0));
+  const wReset = latest.weekly_reset_at ? parseTS(latest.weekly_reset_at).getTime() : null;
+  const activeH = wReset ? cuActiveHours(now, wReset) : null;
+  const nSessions = activeH == null ? null : Math.max(1, Math.ceil(activeH / CU_SESSION_HOURS));
+  let ds = 0, dw = 0;
+  for (const s of segs) {
+    if (s.rows.length < 2) continue;
+    const sp = s.rows.map(r => r.session_pct ?? 0), wp = s.rows.map(r => r.weekly_pct ?? 0);
+    ds += Math.max(0, Math.max(...sp) - Math.min(...sp));
+    dw += Math.max(0, wp[wp.length - 1] - wp[0]);
+  }
+  const k = (ds > 0 && dw > 0) ? dw / ds : null;
+  const perSessionWeekly = nSessions ? wRemain / nSessions : null;
+  const reco = (perSessionWeekly != null && k) ? Math.max(0, Math.min(100, perSessionWeekly / k)) : null;
+  return { wRemain, wReset, activeH, nSessions, k, perSessionWeekly, reco };
+}
+
+/* 세션 구분선·음영 플러그인 */
+const cuSessionPlugin = {
+  id: "cuSessions",
+  beforeDatasetsDraw(chart, _a, opts) {
+    const segs = (opts && opts.segments) || [], ca = chart.chartArea, x = chart.scales.x;
+    if (!ca || !segs.length) return;
+    const ctx = chart.ctx; ctx.save();
+    segs.forEach((s, i) => {
+      if (i % 2 === 0) return;                                   // 홀수 세션만 음영 → 교대 표시
+      const a = Math.max(x.getPixelForValue(s.start), ca.left);
+      const b = Math.min(x.getPixelForValue(s.close), ca.right);
+      if (b > a) { ctx.fillStyle = "rgba(31,82,75,.05)"; ctx.fillRect(a, ca.top, b - a, ca.bottom - ca.top); }
+    });
+    ctx.restore();
+  },
+  afterDatasetsDraw(chart, _a, opts) {
+    const segs = (opts && opts.segments) || [], ca = chart.chartArea, x = chart.scales.x;
+    if (!ca || !segs.length || segs.length > 40) return;
+    const ctx = chart.ctx; ctx.save();
+    ctx.font = "10px Pretendard, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "top";
+    segs.forEach((s) => {
+      [[s.start, "start"], [s.close, "close"]].forEach(([t, kind]) => {
+        const px = x.getPixelForValue(t);
+        if (px < ca.left - 1 || px > ca.right + 1) return;
+        ctx.beginPath();
+        ctx.setLineDash(kind === "start" ? [] : [3, 3]);
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = kind === "start" ? CU_COLOR.bound : "rgba(154,144,129,.7)";
+        ctx.moveTo(px, ca.top); ctx.lineTo(px, ca.bottom); ctx.stroke();
+      });
+      const mid = (Math.max(x.getPixelForValue(s.start), ca.left) + Math.min(x.getPixelForValue(s.close), ca.right)) / 2;
+      if (mid > ca.left && mid < ca.right) { ctx.fillStyle = "#9A9081"; ctx.fillText(`S${s.no}`, mid, ca.top + 2); }
+    });
+    ctx.setLineDash([]); ctx.restore();
+  },
+};
+
+/* 세션별 추천 사용량 기준선 플러그인 */
+const cuRecoPlugin = {
+  id: "cuReco",
+  afterDatasetsDraw(chart, _a, opts) {
+    const v = opts && opts.value, ca = chart.chartArea, y = chart.scales.y;
+    if (v == null || !ca) return;
+    const py = y.getPixelForValue(v);
+    const ctx = chart.ctx; ctx.save();
+    ctx.setLineDash([6, 4]); ctx.lineWidth = 1.5; ctx.strokeStyle = CU_COLOR.reco;
+    ctx.beginPath(); ctx.moveTo(ca.left, py); ctx.lineTo(ca.right, py); ctx.stroke();
+    ctx.setLineDash([]);
+    const label = `세션별 추천 ${Math.round(v)}%`;
+    ctx.font = "600 10.5px Pretendard, sans-serif";
+    const w = ctx.measureText(label).width + 10;
+    const bx = ca.right - w - 4, by = Math.min(Math.max(py - 17, ca.top + 1), ca.bottom - 16);
+    ctx.fillStyle = "rgba(255,255,255,.92)"; ctx.strokeStyle = CU_COLOR.reco;
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(bx, by, w, 15, 4); else ctx.rect(bx, by, w, 15);
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle = CU_COLOR.reco; ctx.textAlign = "left"; ctx.textBaseline = "middle";
+    ctx.fillText(label, bx + 5, by + 8);
+    ctx.restore();
+  },
+};
+
 window.openClaudeUsageModal = async function () {
-  const rows = await q(sb.from("claude_usage").select("captured_at,session_pct,weekly_pct").order("captured_at", { ascending: false }).limit(500));
+  const rows = await q(sb.from("claude_usage")
+    .select("captured_at,session_pct,weekly_pct,session_reset_at,weekly_reset_at")
+    .order("captured_at", { ascending: false }).limit(500));
   rows.reverse();
   const sessionOver = rows.filter(r => (r.session_pct ?? 0) > CU_SESSION_ALERT_PCT).length;
   const weeklyOver = rows.filter(r => (r.weekly_pct ?? 0) > CU_WEEKLY_ALERT_PCT).length;
+  const segs = cuSplitSessions(rows);
+  const latest = rows[rows.length - 1] || {};
+  const R = rows.length ? cuRecommend(segs, latest) : {};
+  const nz = (v, d = 0) => (v == null ? "-" : (Math.round(v * Math.pow(10, d)) / Math.pow(10, d)));
+
   const body = `
     <div class="cu-modal-stats">
+      <div class="cu-stat"><b>${segs.length}</b>개<span>기록된 세션</span></div>
       <div class="cu-stat"><b>${sessionOver}</b>회<span>세션 ${CU_SESSION_ALERT_PCT}% 초과</span></div>
       <div class="cu-stat"><b>${weeklyOver}</b>회<span>주간 ${CU_WEEKLY_ALERT_PCT}% 초과</span></div>
+      <div class="cu-stat"><b>${nz(R.wRemain)}%</b><span>주간 잔여</span></div>
+      <div class="cu-stat"><b>${R.nSessions ?? "-"}</b>회<span>재설정까지 남은 세션</span></div>
+      <div class="cu-stat cu-stat-hi"><b>${R.reco == null ? "-" : nz(R.reco) + "%"}</b><span>세션별 추천 사용량</span></div>
     </div>
-    <canvas id="cu-chart" height="220"></canvas>`;
+    <div class="cu-chart-wrap"><canvas id="cu-chart"></canvas></div>
+    <div class="cu-legend">
+      <span><i style="border-color:${CU_COLOR.session}"></i>세션 %</span>
+      <span><i style="border-color:${CU_COLOR.weekly}"></i>주간 %</span>
+      <span><i style="border-color:${CU_COLOR.reco};border-top-style:dashed"></i>세션별 추천 사용량</span>
+      <span><i style="border-color:${CU_COLOR.bound}"></i>세션 시작</span>
+      <span><i style="border-color:${CU_COLOR.bound};border-top-style:dashed"></i>세션 종료(재설정)</span>
+    </div>
+    <div class="cu-note">
+      · 점(dot)은 실제 측정 시점입니다. 점 위에 마우스를 올리면 측정시각(KST)과 세션·주간 사용률이 표시됩니다.<br>
+      · <b>세션별 추천 사용량</b> = 주간 잔여 ${nz(R.wRemain)}%p 를 재설정까지 남은 세션 ${R.nSessions ?? "-"}회로 나눈 뒤
+        (세션 1%p ≈ 주간 ${R.k == null ? "-" : nz(R.k, 3)}%p, 실측 환산) 세션 기준 %로 환산한 값입니다.<br>
+      · 남은 세션 수는 활동시간대 ${CU_ACTIVE_FROM}:00~${CU_ACTIVE_TO}:00 (KST) 기준 잔여 ${R.activeH == null ? "-" : nz(R.activeH, 1)}시간을 세션 길이 ${CU_SESSION_HOURS}시간으로 나눈 값입니다.
+    </div>`;
+
   const wrap = modal("Claude 사용량 추이", body, null);
+  wrap.classList.add("cu-wide");
   if (_cuChart) { _cuChart.destroy(); _cuChart = null; }
   if (!rows.length) return;
+
+  const pts = (key) => rows.map(r => ({ x: parseTS(r.captured_at).getTime(), y: r[key] }));
+  const segOf = (ms) => segs.find(s => ms >= s.start && ms <= Math.max(s.close, s.end));
+
   _cuChart = new Chart($("#cu-chart", wrap), {
     type: "line",
     data: {
-      labels: rows.map(r => kstDateTime(r.captured_at)),
       datasets: [
-        { label: "세션 %", data: rows.map(r => r.session_pct), borderColor: "#1F524B", backgroundColor: "transparent", tension: .2, pointRadius: 0 },
-        { label: "주간 %", data: rows.map(r => r.weekly_pct), borderColor: "#D05C26", backgroundColor: "transparent", tension: .2, pointRadius: 0 },
+        { label: "세션 %", data: pts("session_pct"), borderColor: CU_COLOR.session, backgroundColor: CU_COLOR.session, borderWidth: 2, tension: .2, pointRadius: 2.6, pointHoverRadius: 5.5, pointBorderWidth: 0 },
+        { label: "주간 %", data: pts("weekly_pct"), borderColor: CU_COLOR.weekly, backgroundColor: CU_COLOR.weekly, borderWidth: 2, tension: .2, pointRadius: 2.6, pointHoverRadius: 5.5, pointBorderWidth: 0 },
       ],
     },
     options: {
       responsive: true,
-      scales: { y: { min: 0, max: 100, ticks: { callback: (v) => v + "%" } }, x: { ticks: { maxTicksLimit: 8 } } },
-      plugins: { legend: { position: "bottom" } },
+      maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false, axis: "x" },
+      layout: { padding: { top: 14, right: 6 } },
+      scales: {
+        y: { min: 0, max: 100, ticks: { stepSize: 20, callback: (v) => v + "%" }, grid: { color: "rgba(43,40,35,.07)" } },
+        x: {
+          type: "linear",
+          grid: { display: false },
+          /* 날짜가 바뀌는 눈금만 날짜(MM.DD), 나머지는 시각(HH:MM)만 표기 */
+          afterBuildTicks: (axis) => {
+            const span = axis.max - axis.min;
+            const steps = [1, 2, 3, 6, 12, 24, 48].map(h => h * H_MS);
+            const step = steps.find(s => span / s <= 9) || steps[steps.length - 1];
+            const first = Math.ceil((axis.min + KST_OFF) / step) * step - KST_OFF;
+            const out = [];
+            for (let t = first; t <= axis.max; t += step) out.push({ value: t });
+            axis.ticks = out.length ? out : [{ value: axis.min }, { value: axis.max }];
+          },
+          ticks: {
+            autoSkip: false, maxRotation: 0, font: { size: 10.5 },
+            callback: (v, i, ticks) => {
+              const prev = i > 0 ? ticks[i - 1].value : null;
+              if (prev != null && cuKstDate(v) === cuKstDate(prev)) return cuKstTime(v);
+              const hm = cuKstTime(v);
+              return hm === "00:00" ? cuKstMD(v) : [cuKstMD(v), hm];   // 자정 눈금은 날짜만
+            },
+          },
+        },
+      },
+      plugins: {
+        legend: { display: false },
+        cuSessions: { segments: segs },
+        cuReco: { value: R.reco },
+        tooltip: {
+          displayColors: true,
+          callbacks: {
+            title: (items) => cuStamp(items[0].parsed.x),
+            label: (it) => `${it.dataset.label} ${it.parsed.y == null ? "-" : Math.round(it.parsed.y * 10) / 10}%`,
+            afterBody: (items) => {
+              const s = segOf(items[0].parsed.x);
+              if (!s) return "";
+              const lines = [`세션 S${s.no} · 최고 ${Math.round(s.peak)}%`];
+              if (R.reco != null) lines.push(`추천 상한 ${Math.round(R.reco)}%`);
+              return lines;
+            },
+          },
+        },
+      },
     },
+    plugins: [cuSessionPlugin, cuRecoPlugin],
   });
 };
 
