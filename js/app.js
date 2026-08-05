@@ -262,7 +262,10 @@ function cuSplitSessions(rows) {
   for (const r of rows) {
     const t = parseTS(r.captured_at).getTime();
     if (isNaN(t)) continue;
-    const reset = r.session_reset_at ? parseTS(r.session_reset_at).getTime() : null;
+    /* 세션은 5시간 윈도우이므로 '남은 시간'이 5시간을 넘는 reset 값은 오판독으로 보고 버린다.
+       (캡쳐 시 주간 재설정 시각 등을 잘못 읽어 들어오는 경우가 실제로 존재) */
+    let reset = r.session_reset_at ? parseTS(r.session_reset_at).getTime() : null;
+    if (reset != null && (reset <= t || reset - t > (CU_SESSION_HOURS * H_MS + 15 * 60000))) reset = null;
     const pct = r.session_pct ?? 0;
     const isNew = !cur
       || (reset != null && cur.reset != null && Math.abs(reset - cur.reset) > 20 * 60000)
@@ -282,6 +285,59 @@ function cuSplitSessions(rows) {
     s.peak = Math.max(...sp);
   });
   return segs;
+}
+
+/* 주차 분할 — weekly_reset_at(주간 한도 초기화 절대시각) 기준.
+   같은 주차 안에서는 값이 고정되므로, 2시간을 넘어 바뀌면 다음 주차로 본다. */
+function cuSplitWeeks(rows) {
+  const weeks = [];
+  let cur = null;
+  for (const r of rows) {
+    const wr = r.weekly_reset_at ? parseTS(r.weekly_reset_at).getTime() : null;
+    const isNew = !cur || (wr != null && cur.reset != null && Math.abs(wr - cur.reset) > 2 * H_MS);
+    if (isNew) { cur = { reset: wr, rows: [r] }; weeks.push(cur); }
+    else { cur.rows.push(r); if (wr != null && cur.reset == null) cur.reset = wr; }
+  }
+  const now = Date.now();
+  weeks.forEach((w, i) => {
+    w.no = i + 1;
+    w.end = w.reset ?? parseTS(w.rows[w.rows.length - 1].captured_at).getTime();
+    w.start = w.end - 7 * D_MS;
+    w.current = now < w.end && now >= w.start;
+    w.label = `${cuKstMD(w.start)} ~ ${cuKstMD(w.end)}${w.current ? " (이번 주)" : ""}`;
+  });
+  return weeks;
+}
+
+/* 사용량 변동이 없거나(휴일 등) 측정이 부족해 의미가 없는 세션 */
+function cuIsIdleSession(s) {
+  if (!s.rows || !s.rows.length) return true;
+  const sp = s.rows.map(r => r.session_pct ?? 0), wp = s.rows.map(r => r.weekly_pct ?? 0);
+  if (s.rows.length === 1) return sp[0] <= 0;          // 측정 1회 — 사용 흔적이 있으면 남긴다
+  return (Math.max(...sp) - Math.min(...sp)) === 0 && (Math.max(...wp) - Math.min(...wp)) === 0;
+}
+
+/* 표시 대상 세션만 남기고 세션 사이의 빈 구간을 접어주는 x좌표 매핑.
+   packed=false 면 실제 시각을 그대로 쓴다. */
+function cuBuildXMap(segs, packed) {
+  if (!packed || !segs.length) { segs.forEach(s => { s.x0 = s.start; s.x1 = Math.max(s.close, s.end); }); return (t) => t; }
+  const GAP = 20 * 60000;                       // 세션 사이 표시용 간격
+  const map = [];
+  let cursor = segs[0].start;
+  segs.forEach((s) => {
+    const from = s.start, to = Math.max(s.close, s.end);
+    const off = cursor - from;
+    map.push({ from, to, off });
+    s.x0 = from + off; s.x1 = to + off;
+    cursor = to + off + GAP;
+  });
+  return (t) => {
+    for (const m of map) if (t >= m.from && t <= m.to) return t + m.off;
+    if (t < map[0].from) return map[0].from + map[0].off;
+    for (let i = 0; i < map.length - 1; i++) if (t > map[i].to && t < map[i + 1].from) return map[i].to + map[i].off;
+    const last = map[map.length - 1];
+    return last.to + last.off;
+  };
 }
 
 /* 활동 시간대(07~22시 KST)만 계산한 잔여 시간 — 남은 세션 수 추정용 */
@@ -327,8 +383,8 @@ const cuSessionPlugin = {
     const ctx = chart.ctx; ctx.save();
     segs.forEach((s, i) => {
       if (i % 2 === 0) return;                                   // 홀수 세션만 음영 → 교대 표시
-      const a = Math.max(x.getPixelForValue(s.start), ca.left);
-      const b = Math.min(x.getPixelForValue(s.close), ca.right);
+      const a = Math.max(x.getPixelForValue(s.x0), ca.left);
+      const b = Math.min(x.getPixelForValue(s.x1), ca.right);
       if (b > a) { ctx.fillStyle = "rgba(31,82,75,.05)"; ctx.fillRect(a, ca.top, b - a, ca.bottom - ca.top); }
     });
     ctx.restore();
@@ -339,7 +395,7 @@ const cuSessionPlugin = {
     const ctx = chart.ctx; ctx.save();
     ctx.font = "10px Pretendard, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "top";
     segs.forEach((s) => {
-      [[s.start, "start"], [s.close, "close"]].forEach(([t, kind]) => {
+      [[s.x0, "start"], [s.x1, "close"]].forEach(([t, kind]) => {
         const px = x.getPixelForValue(t);
         if (px < ca.left - 1 || px > ca.right + 1) return;
         ctx.beginPath();
@@ -348,7 +404,7 @@ const cuSessionPlugin = {
         ctx.strokeStyle = kind === "start" ? CU_COLOR.bound : "rgba(154,144,129,.7)";
         ctx.moveTo(px, ca.top); ctx.lineTo(px, ca.bottom); ctx.stroke();
       });
-      const mid = (Math.max(x.getPixelForValue(s.start), ca.left) + Math.min(x.getPixelForValue(s.close), ca.right)) / 2;
+      const mid = (Math.max(x.getPixelForValue(s.x0), ca.left) + Math.min(x.getPixelForValue(s.x1), ca.right)) / 2;
       if (mid > ca.left && mid < ca.right) { ctx.fillStyle = "#9A9081"; ctx.fillText(`S${s.no}`, mid, ca.top + 2); }
     });
     ctx.setLineDash([]); ctx.restore();
@@ -381,26 +437,24 @@ const cuRecoPlugin = {
 };
 
 window.openClaudeUsageModal = async function () {
-  const rows = await q(sb.from("claude_usage")
+  const allRows = await q(sb.from("claude_usage")
     .select("captured_at,session_pct,weekly_pct,session_reset_at,weekly_reset_at")
-    .order("captured_at", { ascending: false }).limit(500));
-  rows.reverse();
-  const sessionOver = rows.filter(r => (r.session_pct ?? 0) > CU_SESSION_ALERT_PCT).length;
-  const weeklyOver = rows.filter(r => (r.weekly_pct ?? 0) > CU_WEEKLY_ALERT_PCT).length;
-  const segs = cuSplitSessions(rows);
-  const latest = rows[rows.length - 1] || {};
-  const R = rows.length ? cuRecommend(segs, latest) : {};
-  const nz = (v, d = 0) => (v == null ? "-" : (Math.round(v * Math.pow(10, d)) / Math.pow(10, d)));
+    .order("captured_at", { ascending: false }).limit(1000));
+  allRows.reverse();
+  const weeks = cuSplitWeeks(allRows);
+  const defaultIdx = Math.max(0, weeks.findIndex(w => w.current) >= 0 ? weeks.findIndex(w => w.current) : weeks.length - 1);
 
   const body = `
-    <div class="cu-modal-stats">
-      <div class="cu-stat"><b>${segs.length}<i>개</i></b><span>기록된 세션</span></div>
-      <div class="cu-stat"><b>${sessionOver}<i>회</i></b><span>세션 ${CU_SESSION_ALERT_PCT}% 초과</span></div>
-      <div class="cu-stat"><b>${weeklyOver}<i>회</i></b><span>주간 ${CU_WEEKLY_ALERT_PCT}% 초과</span></div>
-      <div class="cu-stat"><b>${nz(R.wRemain)}<i>%</i></b><span>주간 잔여</span></div>
-      <div class="cu-stat"><b>${R.nSessions ?? "-"}<i>회</i></b><span>재설정까지 남은 세션</span></div>
-      <div class="cu-stat cu-stat-hi"><b>${R.reco == null ? "-" : nz(R.reco) + "<i>%</i>"}</b><span>세션별 추천 사용량</span></div>
+    <div class="cu-toolbar">
+      <label for="cu-week">주차</label>
+      <select id="cu-week" name="cu-week">
+        ${weeks.map((w, i) => `<option value="${i}" ${i === defaultIdx ? "selected" : ""}>${esc(w.label)}</option>`).join("")}
+        <option value="all">전체 기간</option>
+      </select>
+      <label class="cu-check"><input type="checkbox" id="cu-hide-idle" checked> 사용량 없는 세션 숨기기</label>
+      <span class="cu-toolbar-hint" id="cu-hidden-info"></span>
     </div>
+    <div class="cu-modal-stats" id="cu-stats"></div>
     <div class="cu-chart-wrap"><canvas id="cu-chart"></canvas></div>
     <div class="cu-legend">
       <span><i style="border-color:${CU_COLOR.session}"></i>세션 %</span>
@@ -409,82 +463,149 @@ window.openClaudeUsageModal = async function () {
       <span><i style="border-color:${CU_COLOR.bound}"></i>세션 시작</span>
       <span><i style="border-color:${CU_COLOR.bound};border-top-style:dashed"></i>세션 종료(재설정)</span>
     </div>
-    <div class="cu-note">
-      · 점(dot)은 실제 측정 시점입니다. 점 위에 마우스를 올리면 측정시각(KST)과 세션·주간 사용률이 표시됩니다.<br>
-      · <b>세션별 추천 사용량</b> = 주간 잔여 ${nz(R.wRemain)}%p 를 재설정까지 남은 세션 ${R.nSessions ?? "-"}회로 나눈 뒤
-        (세션 1%p ≈ 주간 ${R.k == null ? "-" : nz(R.k, 3)}%p, 실측 환산) 세션 기준 %로 환산한 값입니다.<br>
-      · 남은 세션 수는 활동시간대 ${CU_ACTIVE_FROM}:00~${CU_ACTIVE_TO}:00 (KST) 기준 잔여 ${R.activeH == null ? "-" : nz(R.activeH, 1)}시간을 세션 길이 ${CU_SESSION_HOURS}시간으로 나눈 값입니다.
-    </div>`;
+    <div class="cu-note" id="cu-note"></div>`;
 
   const wrap = modal("Claude 사용량 추이", body, null);
   wrap.classList.add("cu-wide");
   if (_cuChart) { _cuChart.destroy(); _cuChart = null; }
-  if (!rows.length) return;
+  if (!allRows.length) { $("#cu-note", wrap).textContent = "표시할 사용량 기록이 없습니다."; return; }
 
-  const pts = (key) => rows.map(r => ({ x: parseTS(r.captured_at).getTime(), y: r[key] }));
-  const segOf = (ms) => segs.find(s => ms >= s.start && ms <= Math.max(s.close, s.end));
+  const nz = (v, d = 0) => (v == null ? "-" : (Math.round(v * Math.pow(10, d)) / Math.pow(10, d)));
 
-  _cuChart = new Chart($("#cu-chart", wrap), {
-    type: "line",
-    data: {
-      datasets: [
-        { label: "세션 %", data: pts("session_pct"), borderColor: CU_COLOR.session, backgroundColor: CU_COLOR.session, borderWidth: 2, tension: .2, pointRadius: 2.6, pointHoverRadius: 5.5, pointBorderWidth: 0 },
-        { label: "주간 %", data: pts("weekly_pct"), borderColor: CU_COLOR.weekly, backgroundColor: CU_COLOR.weekly, borderWidth: 2, tension: .2, pointRadius: 2.6, pointHoverRadius: 5.5, pointBorderWidth: 0 },
-      ],
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      interaction: { mode: "index", intersect: false, axis: "x" },
-      layout: { padding: { top: 14, right: 6 } },
-      scales: {
-        y: { min: 0, max: 100, ticks: { stepSize: 20, callback: (v) => v + "%" }, grid: { color: "rgba(43,40,35,.07)" } },
-        x: {
-          type: "linear",
-          grid: { display: false },
-          /* 날짜가 바뀌는 눈금만 날짜(MM.DD), 나머지는 시각(HH:MM)만 표기 */
-          afterBuildTicks: (axis) => {
-            const span = axis.max - axis.min;
-            const steps = [1, 2, 3, 6, 12, 24, 48].map(h => h * H_MS);
-            const step = steps.find(s => span / s <= 9) || steps[steps.length - 1];
-            const first = Math.ceil((axis.min + KST_OFF) / step) * step - KST_OFF;
-            const out = [];
-            for (let t = first; t <= axis.max; t += step) out.push({ value: t });
-            axis.ticks = out.length ? out : [{ value: axis.min }, { value: axis.max }];
+  function draw() {
+    const wSel = $("#cu-week", wrap).value;
+    const hideIdle = $("#cu-hide-idle", wrap).checked;
+    const week = wSel === "all" ? null : weeks[Number(wSel)];
+    const rows = week ? week.rows : allRows;
+    const isCurrent = week ? !!week.current : (weeks.length ? !!weeks[weeks.length - 1].current : false);
+
+    const all = cuSplitSessions(rows);
+    const idle = all.filter(cuIsIdleSession);
+    const segs = hideIdle ? all.filter(s => !cuIsIdleSession(s)) : all;
+    segs.forEach((s, i) => { s.no = i + 1; });                       // 표시 대상 기준으로 재번호
+    const shown = segs.reduce((a, s) => a.concat(s.rows), []);
+    const toX = cuBuildXMap(segs, hideIdle);
+
+    const sessionOver = shown.filter(r => (r.session_pct ?? 0) > CU_SESSION_ALERT_PCT).length;
+    const weeklyOver = shown.filter(r => (r.weekly_pct ?? 0) > CU_WEEKLY_ALERT_PCT).length;
+    const latest = rows[rows.length - 1] || {};
+    const R = isCurrent && shown.length ? cuRecommend(segs, latest) : {};
+    const wLast = latest.weekly_pct ?? null;
+    const peak = shown.length ? Math.max(...shown.map(r => r.session_pct ?? 0)) : null;
+
+    $("#cu-hidden-info", wrap).textContent = hideIdle && idle.length ? `${idle.length}개 세션 숨김` : "";
+
+    $("#cu-stats", wrap).innerHTML = `
+      <div class="cu-stat"><b>${segs.length}<i>개</i></b><span>표시 중인 세션</span></div>
+      <div class="cu-stat"><b>${sessionOver}<i>회</i></b><span>세션 ${CU_SESSION_ALERT_PCT}% 초과</span></div>
+      <div class="cu-stat"><b>${weeklyOver}<i>회</i></b><span>주간 ${CU_WEEKLY_ALERT_PCT}% 초과</span></div>
+      ${isCurrent
+        ? `<div class="cu-stat"><b>${nz(R.wRemain)}<i>%</i></b><span>주간 잔여</span></div>
+           <div class="cu-stat"><b>${R.nSessions ?? "-"}<i>회</i></b><span>재설정까지 남은 세션</span></div>
+           <div class="cu-stat cu-stat-hi"><b>${R.reco == null ? "-" : nz(R.reco) + "<i>%</i>"}</b><span>세션별 추천 사용량</span></div>`
+        : `<div class="cu-stat"><b>${nz(wLast)}<i>%</i></b><span>주간 최종 사용률</span></div>
+           <div class="cu-stat"><b>${nz(peak)}<i>%</i></b><span>세션 최고 사용률</span></div>
+           <div class="cu-stat"><b>${shown.length}<i>회</i></b><span>측정 횟수</span></div>`}`;
+
+    $("#cu-note", wrap).innerHTML = `
+      · 점(dot)은 실제 측정 시점입니다. 점 위에 마우스를 올리면 측정시각(KST)과 세션·주간 사용률이 표시됩니다.<br>
+      · 주차는 <b>주간 한도 초기화 시각</b>을 경계로 나눕니다${week ? ` — 이 주차는 ${cuStamp(week.start)} ~ ${cuStamp(week.end)} 입니다.` : " — 현재 전체 기간을 함께 보고 있습니다."}<br>
+      ${hideIdle
+        ? `· <b>사용량 없는 세션 숨기기</b>가 켜져 있어, 사용률 변동이 전혀 없거나 측정이 1회뿐인 세션 ${idle.length}개를 제외하고 그 빈 구간만큼 x축을 접어 표시합니다.<br>`
+        : `· 모든 세션을 실제 시간 간격 그대로 표시합니다.<br>`}
+      ${isCurrent
+        ? `· <b>세션별 추천 사용량</b> = 주간 잔여 ${nz(R.wRemain)}%p 를 재설정까지 남은 세션 ${R.nSessions ?? "-"}회로 나눈 뒤
+             (세션 1%p ≈ 주간 ${R.k == null ? "-" : nz(R.k, 3)}%p, 실측 환산) 세션 기준 %로 환산한 값입니다.
+             남은 세션 수는 활동시간대 ${CU_ACTIVE_FROM}:00~${CU_ACTIVE_TO}:00 (KST) 기준 잔여 ${R.activeH == null ? "-" : nz(R.activeH, 1)}시간을 세션 길이 ${CU_SESSION_HOURS}시간으로 나눈 값입니다.`
+        : `· 지난 주차에는 추천 사용량 기준선을 표시하지 않습니다 (이미 초기화된 한도입니다).`}`;
+
+    const pts = (key) => shown.map(r => {
+      const t = parseTS(r.captured_at).getTime();
+      return { x: toX(t), y: r[key], t };
+    });
+    const segOf = (t) => segs.find(s => t >= s.start && t <= Math.max(s.close, s.end));
+
+    if (_cuChart) { _cuChart.destroy(); _cuChart = null; }
+    if (!shown.length) return;
+
+    _cuChart = new Chart($("#cu-chart", wrap), {
+      type: "line",
+      data: {
+        datasets: [
+          { label: "세션 %", data: pts("session_pct"), borderColor: CU_COLOR.session, backgroundColor: CU_COLOR.session, borderWidth: 2, tension: .2, pointRadius: 2.6, pointHoverRadius: 5.5, pointBorderWidth: 0 },
+          { label: "주간 %", data: pts("weekly_pct"), borderColor: CU_COLOR.weekly, backgroundColor: CU_COLOR.weekly, borderWidth: 2, tension: .2, pointRadius: 2.6, pointHoverRadius: 5.5, pointBorderWidth: 0 },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: "index", intersect: false, axis: "x" },
+        layout: { padding: { top: 14, right: 6 } },
+        scales: {
+          y: { min: 0, max: 100, ticks: { stepSize: 20, callback: (v) => v + "%" }, grid: { color: "rgba(43,40,35,.07)" } },
+          x: {
+            type: "linear",
+            grid: { display: false },
+            /* 접힌 축이면 세션 시작마다, 실시간 축이면 KST 정시마다 눈금.
+               어느 쪽이든 날짜가 바뀔 때만 날짜, 나머지는 시각만 표기한다. */
+            afterBuildTicks: (axis) => {
+              let out;
+              if (hideIdle) {
+                /* 접힌 축에서는 눈금 위치(x0)와 실제 시각(start)이 다르므로 real 을 함께 싣는다 */
+                out = segs.map(s => ({ value: s.x0, real: s.start }));
+                const last = segs[segs.length - 1];
+                if (last) out.push({ value: last.x1, real: Math.max(last.close, last.end) });
+                if (out.length > 12) out = out.filter((_, i) => i % Math.ceil(out.length / 12) === 0);
+              } else {
+                const span = axis.max - axis.min;
+                const steps = [1, 2, 3, 6, 12, 24, 48].map(h => h * H_MS);
+                const step = steps.find(s => span / s <= 9) || steps[steps.length - 1];
+                const first = Math.ceil((axis.min + KST_OFF) / step) * step - KST_OFF;
+                out = [];
+                for (let t = first; t <= axis.max; t += step) out.push({ value: t });
+              }
+              axis.ticks = out.length ? out : [{ value: axis.min }, { value: axis.max }];
+            },
+            ticks: {
+              autoSkip: false, maxRotation: 0, font: { size: 10.5 },
+              callback: (v, i, ticks) => {
+                const real = (ticks[i] && ticks[i].real != null) ? ticks[i].real : v;
+                const pt = i > 0 ? ticks[i - 1] : null;
+                const prev = pt ? (pt.real != null ? pt.real : pt.value) : null;
+                if (prev != null && cuKstDate(real) === cuKstDate(prev)) return cuKstTime(real);
+                const hm = cuKstTime(real);
+                return hm === "00:00" ? cuKstMD(real) : [cuKstMD(real), hm];   // 자정 눈금은 날짜만
+              },
+            },
           },
-          ticks: {
-            autoSkip: false, maxRotation: 0, font: { size: 10.5 },
-            callback: (v, i, ticks) => {
-              const prev = i > 0 ? ticks[i - 1].value : null;
-              if (prev != null && cuKstDate(v) === cuKstDate(prev)) return cuKstTime(v);
-              const hm = cuKstTime(v);
-              return hm === "00:00" ? cuKstMD(v) : [cuKstMD(v), hm];   // 자정 눈금은 날짜만
+        },
+        plugins: {
+          legend: { display: false },
+          cuSessions: { segments: segs },
+          cuReco: { value: R.reco },
+          tooltip: {
+            displayColors: true,
+            callbacks: {
+              title: (items) => cuStamp(items[0].raw.t),
+              label: (it) => `${it.dataset.label} ${it.parsed.y == null ? "-" : Math.round(it.parsed.y * 10) / 10}%`,
+              afterBody: (items) => {
+                const s = segOf(items[0].raw.t);
+                if (!s) return "";
+                const lines = [`세션 S${s.no} · 최고 ${Math.round(s.peak)}%`];
+                if (R.reco != null) lines.push(`추천 상한 ${Math.round(R.reco)}%`);
+                return lines;
+              },
             },
           },
         },
       },
-      plugins: {
-        legend: { display: false },
-        cuSessions: { segments: segs },
-        cuReco: { value: R.reco },
-        tooltip: {
-          displayColors: true,
-          callbacks: {
-            title: (items) => cuStamp(items[0].parsed.x),
-            label: (it) => `${it.dataset.label} ${it.parsed.y == null ? "-" : Math.round(it.parsed.y * 10) / 10}%`,
-            afterBody: (items) => {
-              const s = segOf(items[0].parsed.x);
-              if (!s) return "";
-              const lines = [`세션 S${s.no} · 최고 ${Math.round(s.peak)}%`];
-              if (R.reco != null) lines.push(`추천 상한 ${Math.round(R.reco)}%`);
-              return lines;
-            },
-          },
-        },
-      },
-    },
-    plugins: [cuSessionPlugin, cuRecoPlugin],
-  });
+      plugins: [cuSessionPlugin, cuRecoPlugin],
+    });
+  }
+
+  $("#cu-week", wrap).addEventListener("change", draw);
+  $("#cu-hide-idle", wrap).addEventListener("change", draw);
+  draw();
 };
 
 /* 범용 모달 */
