@@ -340,6 +340,13 @@ details.dash-tasks[open] > summary::before { transform: rotate(90deg); }
 /* v14: 사용량 그래프 고도화 — 넓은 모달 / 범례 / 주석 */
 .cu-wide .modal { width: 920px; }
 .cu-chart-wrap { position: relative; width: 100%; height: 300px; }
+.cu-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px;
+  padding-bottom: 10px; border-bottom: 1px solid var(--line); font-size: 12.5px; }
+.cu-toolbar > label { color: var(--sub); font-weight: 600; }
+.cu-toolbar select { min-width: 200px; padding: 5px 8px; }
+.cu-check { display: inline-flex; align-items: center; gap: 5px; color: var(--sub); cursor: pointer; }
+.cu-check input { margin: 0; cursor: pointer; }
+.cu-toolbar-hint { margin-left: auto; color: #8A6D1F; font-size: 11.5px; }
 .cu-stat b i { font-style: normal; font-size: 13px; font-weight: 700; margin-left: 1px; }
 .cu-stat-hi { background: #FBF4E2; border-color: #E5D6A8; }
 .cu-stat-hi b { color: #8A6D1F; }
