@@ -245,7 +245,7 @@ const CU_SESSION_HOURS = 5;        // 세션(롤링 윈도우) 길이 (시간)
 const CU_ACTIVE_FROM = 7;          // 하루 활동 시작 시각 (KST) — 남은 세션 수 추정용
 const CU_ACTIVE_TO = 22;           // 하루 활동 종료 시각 (KST)
 const CU_COLOR = { session: "#1F524B", weekly: "#D05C26", reco: "#8A6D1F", bound: "#9A9081" };
-const H_MS = 3600000, D_MS = 86400000, KST_OFF = 9 * H_MS;
+const H_MS = 3600000, D_MS = 86400000, KST_OFF = 9 * H_MS, CU_WEEK_MS = 7 * D_MS;
 let _cuChart = null;
 
 /* KST 포맷터 (ms 타임스탬프 입력) */
@@ -287,24 +287,55 @@ function cuSplitSessions(rows) {
   return segs;
 }
 
-/* 주차 분할 — weekly_reset_at(주간 한도 초기화 절대시각) 기준.
-   같은 주차 안에서는 값이 고정되므로, 2시간을 넘어 바뀌면 다음 주차로 본다. */
-function cuSplitWeeks(rows) {
-  const weeks = [];
-  let cur = null;
+/* 주간 재설정 '위상' — 에폭 기준 7일 주기 안에서 재설정이 일어나는 지점.
+   행별 weekly_reset_at 을 그대로 믿으면 캡쳐 1건만 오판독돼도 주차가 쪼개지므로,
+   전체 기록의 최빈값(10분 단위 버킷 + 인접 버킷 병합)으로 기준을 잡는다. */
+function cuWeeklyPhase(rows) {
+  const BK = 600000;                                   // 10분
+  const counts = new Map();
   for (const r of rows) {
-    const wr = r.weekly_reset_at ? parseTS(r.weekly_reset_at).getTime() : null;
-    const isNew = !cur || (wr != null && cur.reset != null && Math.abs(wr - cur.reset) > 2 * H_MS);
-    if (isNew) { cur = { reset: wr, rows: [r] }; weeks.push(cur); }
-    else { cur.rows.push(r); if (wr != null && cur.reset == null) cur.reset = wr; }
+    if (!r.weekly_reset_at) continue;
+    const t = parseTS(r.weekly_reset_at).getTime(), cap = parseTS(r.captured_at).getTime();
+    if (isNaN(t) || isNaN(cap)) continue;
+    if (t <= cap || t - cap > CU_WEEK_MS) continue;     // 주간 한도는 7일 주기 — 벗어나면 오판독
+    const ph = ((t % CU_WEEK_MS) + CU_WEEK_MS) % CU_WEEK_MS;
+    const key = Math.round(ph / BK);
+    const e = counts.get(key) || { n: 0, sum: 0 };
+    e.n++; e.sum += ph; counts.set(key, e);
+  }
+  if (!counts.size) return null;
+  let best = null;
+  for (const [k, e] of counts) if (!best || e.n > best.n) best = { key: k, n: e.n, sum: e.sum, cnt: e.n };
+  /* 00:59:55 / 01:00:38 처럼 버킷 경계에 걸친 값들을 함께 평균 */
+  let sum = best.sum, cnt = best.cnt;
+  [best.key - 1, best.key + 1].forEach(k => { const e = counts.get(k); if (e) { sum += e.sum; cnt += e.n; } });
+  return cnt ? sum / cnt : null;
+}
+
+/* 주차 분할 — 위 위상을 기준으로 캡쳐 시각을 7일 구간에 배정한다.
+   구간이 서로 겹치지 않으므로 라벨이 중복되거나 이상치가 별도 주차를 만드는 일이 없다. */
+function cuSplitWeeks(rows) {
+  const phase = cuWeeklyPhase(rows);
+  const buckets = new Map();
+  for (const r of rows) {
+    const cap = parseTS(r.captured_at).getTime();
+    if (isNaN(cap)) continue;
+    const end = phase == null ? 0 : phase + (Math.floor((cap - phase) / CU_WEEK_MS) + 1) * CU_WEEK_MS;
+    if (!buckets.has(end)) buckets.set(end, []);
+    buckets.get(end).push(r);
   }
   const now = Date.now();
-  weeks.forEach((w, i) => {
-    w.no = i + 1;
-    w.end = w.reset ?? parseTS(w.rows[w.rows.length - 1].captured_at).getTime();
-    w.start = w.end - 7 * D_MS;
+  const weeks = [...buckets.entries()].sort((a, b) => a[0] - b[0]).map(([end, rs], i) => {
+    const last = parseTS(rs[rs.length - 1].captured_at).getTime();
+    const e = phase == null ? last : end;
+    return { no: i + 1, rows: rs, reset: e, end: e, start: e - CU_WEEK_MS };
+  });
+  const seen = {};
+  weeks.forEach(w => {
     w.current = now < w.end && now >= w.start;
-    w.label = `${cuKstMD(w.start)} ~ ${cuKstMD(w.end)}${w.current ? " (이번 주)" : ""}`;
+    const base = `${cuKstMD(w.start)} ~ ${cuKstMD(w.end)}${w.current ? " (이번 주)" : ""}`;
+    seen[base] = (seen[base] || 0) + 1;
+    w.label = seen[base] > 1 ? `${base} #${seen[base]}` : base;   // 방어적 중복 표기
   });
   return weeks;
 }
