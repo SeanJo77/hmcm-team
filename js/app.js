@@ -937,7 +937,10 @@ window.openHelp = function () {
 
 /* ── router ───────────────────────────────────── */
 const routes = {
-  "/": vDashboard, "/tasks": vTasks, "/wbs": vWbsManage, "/issues": vIssues,
+  /* [2026-09-03] WBS 진행 현황(/tasks) · WBS 관리(팀장)(/wbs) 임시 폐쇄 (요청자 지시).
+     재오픈 시 아래 주석 해제 + index.html nav 링크도 함께 복원. 미등록 hash는 route()에서 vDashboard로 자동 폴백되어
+     즐겨찾기·알림 링크로 직접 접근해도 대시보드로 안전하게 전환됨. */
+  "/": vDashboard, /* "/tasks": vTasks, "/wbs": vWbsManage, */ "/issues": vIssues,
   "/weekly": vWeekly, "/daily": vDaily, "/deliverables": vDeliverables,
   "/docs": vDocs, "/attendance": vAttendance, "/suggest": vSuggest, "/notes": vNotes,
 };
